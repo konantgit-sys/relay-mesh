@@ -51,6 +51,7 @@ from router_policy import (
     TRAFFIC_CLASSES, KIND_TO_TRAFFIC_CLASS, ROUTE_STATS_KEY,
     ROUTE_HISTORY_KEY, ROUTE_BEST_KEY, TC_STATS_KEY, TC_HISTORY_KEY,
     TC_BEST_KEY, TC_POLICY_KEY, BP_MAX_CONCURRENT, BP_MAX_QUEUE_TIME,
+    POLICY_KEY,
 )
 
 # ─── Настройки (из mesh_config.yaml) ──────────────────────────────────
@@ -81,6 +82,37 @@ HEALTH_PORT = config.get("transport.smart_router.health_port", 9933)
 # Redis (lazy import в aredis())
 REDIS_CLIENT = None
 _GLOBAL_ROUTER = None  # глобальный синглтон SmartRouter (in-memory best_channel)
+
+# ═══ Phase 2: Relay Signing — подписанные релеи (L5 Identity) ═══
+SIGNED_RELAYS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "data", "signed_relays.json"
+)
+_signed_relays_cache: dict[str, dict] = {}
+
+
+def _load_signed_relays():
+    """Загрузить список подписанных релеев из файла."""
+    global _signed_relays_cache
+    try:
+        with open(SIGNED_RELAYS_FILE) as f:
+            _signed_relays_cache = json.loads(f.read())
+    except (FileNotFoundError, json.JSONDecodeError, Exception):
+        _signed_relays_cache = {}
+
+
+def is_relay_signed(relay_url: str) -> bool:
+    """Проверить, подписан ли релей через L5 Identity."""
+    return relay_url in _signed_relays_cache
+
+
+def get_signed_relay_count() -> int:
+    """Количество подписанных релеев."""
+    return len(_signed_relays_cache)
+
+
+# Загрузка при старте
+_load_signed_relays()
 
 
 class SmartRouter:
@@ -1268,6 +1300,27 @@ class SmartRouter:
             best_result["channels_used"] = ok_count
         else:
             self.stats["failed"] += 1
+            # ═══ L5T: Dead-Letter Queue — если получатель офлайн ═══
+            to_agent_full = msg.get("to", "")
+            if to_agent_full and to_agent_full != "broadcast" and to_agent_full != "?":
+                try:
+                    from dead_letter import get_dlq
+                    dlq = get_dlq()
+                    dlq_result = await dlq.push(
+                        from_pubkey=msg.get("from", msg.get("pubkey", "")),
+                        to_pubkey=to_agent_full,
+                        content=msg.get("content", json.dumps(msg).decode() if hasattr(json.dumps(msg), 'decode') else str(json.dumps(msg))),
+                        kind=msg.get("kind", 39002),
+                        priority=meta.get("priority", "normal"),
+                    )
+                    if dlq_result["ok"]:
+                        self.stats["dlq_queued"] += 1
+                        best_result["ok"] = True
+                        best_result["dlq"] = True
+                        best_result["dlq_hash"] = dlq_result["hash"]
+                        print(f"[Router] 📥 DLQ queued for {to_agent_full[:12]}:{dlq_result['hash']}")
+                except Exception as ex:
+                    self.stats["dlq_error"] += 1
 
         return best_result
 
@@ -1540,3 +1593,9 @@ class SmartRouter:
                 health.serve_forever(),
                 self.self_learning_loop(),
             )
+
+# ═══ Entry point — запуск напрямую или через router_api.py ═══
+if __name__ == "__main__":
+    print("[SmartRouter] Starting via __main__...")
+    from router_api import run_router
+    asyncio.run(run_router())

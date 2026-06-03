@@ -1,0 +1,58 @@
+{
+  "wss://relay.primal.net": {
+    "relay_url": "wss://relay.primal.net",
+    "pubkey": "aabbccdd00112233445566778899aabbccdd00112233445566778899aabbccdd",
+    "mesh_id": "snin-main-1",
+    "signature": "037afd29e3992b5f0826029cf44d78be7f9ca2a04482829e55db7d56d9bd225bb0ee0d9fb922244770ac42ab221b38f444ecf2693882b464443e849119632c0e",
+    "timestamp": 1780511078,
+    "verified_at": 1780511078.5386372
+  },
+  "wss://nostr.bond": {
+    "relay_url": "wss://nostr.bond",
+    "pubkey": "deadbeef00112233445566778899aabbccdd00112233445566778899aabbccdd",
+    "mesh_id": "snin-main-1",
+    "signature": "c1db376f8c5530efb889cd9a897cb2275e3330164cf08237ec90f14e95c1c76309487be2c0ce09064e991371b34fc9dd67b0cf6d08e0103ca728adc721b8a50b",
+    "timestamp": 1780511208,
+    "verified_at": 1780511208.3155506
+  },
+  "wss://relay.damus.io": {
+    "relay_url": "wss://relay.damus.io",
+    "pubkey": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "mesh_id": "snin-main-1",
+    "signature": "d8e646127651d4ed0ade53568b41fa7e0d1898eaa948033870e37b6268eb0a409b6664d71db1811505b03a91114530643062d4e8596fadb011ec99378bb8d904",
+    "timestamp": 1780511323,
+    "verified_at": 1780511323.585599
+  },
+  "wss://purplepag.es": {
+    "relay_url": "wss://purplepag.es",
+    "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mesh_id": "snin-main-1",
+    "signature": "550a7b49fca57aeb0bb139e8051f622d32484df7dab068ac366d6eec6cff545c306a92b8768327b933d9d243181b0865129488481cf4c06fd0c456bd722e6e04",
+    "timestamp": 1780511340,
+    "verified_at": 1780511340.6173015
+  },
+  "wss://relay.azzamo.net": {
+    "relay_url": "wss://relay.azzamo.net",
+    "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "mesh_id": "snin-main-1",
+    "signature": "4d578f3e87a261c050106761c11125f26b6c33d68f133eb3fca365b26429ca03f90efb5e865c874017277d3e549f19c9e2fc357e53405a0eab3df5add312c805",
+    "timestamp": 1780511340,
+    "verified_at": 1780511340.6194484
+  },
+  "wss://test-relay.snin.io": {
+    "relay_url": "wss://test-relay.snin.io",
+    "pubkey": "1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff",
+    "mesh_id": "snin-main-1",
+    "signature": "f43c3da9e5cfe8820473a7703b154a87f77b3d98e1a2a8f76194ba1e9a3e888292d37074fd931866ebbe45f4f0af7b85c7aef65eea7e15bdaa0b8b3f6c5a8e06",
+    "timestamp": 1780513414,
+    "verified_at": 1780513414.508791
+  },
+  "wss://identity-proxy-test.snin.io": {
+    "relay_url": "wss://identity-proxy-test.snin.io",
+    "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+    "mesh_id": "snin-main-1",
+    "signature": "a7674edd17c3237139fd2277d913b86c5ff1995150addd14580c1130a2816651f261234d2ee651a12155b211c2079864b710213b094fe924bbc80e8572691f02",
+    "timestamp": 1780513414,
+    "verified_at": 1780513414.5254192
+  }
+}
