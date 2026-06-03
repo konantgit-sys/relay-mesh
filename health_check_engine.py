@@ -1,19 +1,45 @@
 #!/usr/bin/env python3
 """
-SNIN Health Check Engine v3.2 — Mesh Resilience Module
+SNIN Health Check Engine v3.5 L15 — Mesh Resilience + WS + Alerts + History + Alert Engine + Auto-Recovery
 Config-driven: читает список сервисов из mesh_config.yaml.
+
+L13 фичи:
+  - WebSocket stream live-статусов (/api/v1/health/ws)
+  - SQLite история проверок (health_history.db)
+  - Dashboard API (/api/v1/health/dashboard)
+  - Telegram/Nostr алерты (alert_engine.py)
+  - Purge старой истории раз в час
+
+L14 фичи:
+  - YAML-driven Alert Engine с правилами (alert_config.yaml)
+  - Multi-channel dispatch: Telegram, Nostr, Webhook
+  - Эскалация с таймерами (уровни 0→1→2→3)
+  - /ack сброс эскалации
+  - SQLite alert_log + events
+
+L15 фичи:
+  - YAML-driven Auto-Recovery (recovery_config.yaml, 5 стратегий)
+  - Анализ причины падения (логи, метрики, история)
+  - 3-4 уровня попыток: restart → clear_cache → reload_layer → escalate
+  - Supervisor bridge (HTTP API + fallback kill+nohup)
+  - Rate limits: cooldown, max daily, slot health threshold
+  - API: /api/v1/recovery/stats, /api/v1/recovery/events, /api/v1/recovery/analysis, /api/v1/recovery/reset/{svc}
 """
 
 import asyncio
 import json
 import logging
 import os
+import sqlite3
 import time
 from datetime import datetime
 from typing import Dict, List
 
 import aiohttp
 from mesh_config import config
+from health_ws import get_broadcaster
+from alert_engine import get_alert_engine
+from auto_recovery import get_auto_recovery
 
 # ─── SETUP ───
 LOG_DIR = config.get("global.log_dir", "/home/agent/data/logs")
@@ -34,6 +60,11 @@ STATUS_FILE = config.get("orchestration.health_engine.status_file",
 HEALTH_CHECK_INTERVAL = config.get("orchestration.health_engine.interval", 10)
 RESPONSE_TIMEOUT = config.get("orchestration.health_engine.timeout", 2.0)
 DEGRADATION_THRESHOLD = config.get("orchestration.health_engine.degradation_threshold", 3)
+
+# ─── L13: SQLite история ───
+HEALTH_DB = config.get("orchestration.health_engine.history_db",
+                       "/home/agent/data/sites/relay-mesh/logs/health_history.db")
+HISTORY_RETENTION = config.get("orchestration.health_engine.history_retention", 86400 * 7)  # 7 дней
 
 # ─── СЕРВИСЫ ИЗ КОНФИГА ───
 # Авто-генерация списка сервисов для health check
@@ -153,6 +184,68 @@ class HealthCheckEngine:
             self.statuses[svc["name"]] = ServiceStatus(svc)
         logger.info(f"📋 Monitoring {len(SERVICES)} services from mesh_config.yaml")
 
+        # L13: SQLite история
+        self._db_conn = sqlite3.connect(HEALTH_DB)
+        self._init_db()
+        self._last_broadcast_state = {name: s.to_dict() for name, s in self.statuses.items()}
+
+        # L13: WebSocket + Alerts
+        self._broadcaster = get_broadcaster()
+        self._broadcaster.set_state_getter(self._get_full_state_for_ws)
+        self._alert_engine = get_alert_engine()
+
+        # L15: Auto-Recovery
+        self._auto_recovery = get_auto_recovery()
+
+    def _init_db(self):
+        """Создаёт таблицы если не существуют."""
+        self._db_conn.execute("""
+            CREATE TABLE IF NOT EXISTS health_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                checked_at INTEGER NOT NULL,
+                latency_ms REAL DEFAULT 0,
+                uptime_seconds INTEGER DEFAULT 0
+            )
+        """)
+        self._db_conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_health_svc_time 
+            ON health_history(service_name, checked_at)
+        """)
+        self._db_conn.commit()
+
+    def _log_to_db(self, name: str, status: str, latency: float, uptime: int):
+        """Пишет одну запись в health_history."""
+        try:
+            self._db_conn.execute(
+                "INSERT INTO health_history (service_name, status, checked_at, latency_ms, uptime_seconds) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, status, int(time.time()), latency, uptime)
+            )
+            self._db_conn.commit()
+        except Exception as e:
+            logger.warning(f"DB log error ({name}): {e}")
+
+    def _purge_old_history(self):
+        """Удаляет записи старше HISTORY_RETENTION."""
+        try:
+            cutoff = int(time.time()) - HISTORY_RETENTION
+            self._db_conn.execute("DELETE FROM health_history WHERE checked_at < ?", (cutoff,))
+            self._db_conn.commit()
+            logger.info(f"🧹 History purged (before {cutoff})")
+        except Exception as e:
+            logger.warning(f"Purge error: {e}")
+
+    def _get_full_state_for_ws(self) -> Dict:
+        """Возвращает состояние для отправки через WS при коннекте."""
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "engine_uptime": int(time.time() - self.start_time),
+            "services": {name: s.to_dict() for name, s in self.statuses.items()},
+            "degradation": self.degradation_modes,
+        }
+
     async def check_http(self, svc: dict, health_port: int = None) -> ServiceStatus:
         status = self.statuses[svc["name"]]
         port = health_port or svc.get("port")
@@ -204,20 +297,58 @@ class HealthCheckEngine:
 
     async def check_service(self, svc: dict) -> ServiceStatus:
         if svc.get("health_port"):
-            return await self.check_http(svc, health_port=svc["health_port"])
-        if svc.get("path") and svc.get("port"):
-            return await self.check_http(svc)
-        return await self.check_tcp(svc)
+            result = await self.check_http(svc, health_port=svc["health_port"])
+        elif svc.get("path") and svc.get("port"):
+            result = await self.check_http(svc)
+        else:
+            result = await self.check_tcp(svc)
+
+        # L13: пишем в SQLite историю
+        self._log_to_db(
+            result.name,
+            "alive" if result.is_alive else "dead",
+            result.latency_ms,
+            int(time.time() - result._start_time) if result._start_time else 0
+        )
+
+        return result
 
     async def monitor_loop(self):
-        logger.info("🚀 Health Check Engine v3.2 (config-driven) started")
+        logger.info("🚀 Health Check Engine v3.5 (L15: Auto-Recovery + Alert Engine) started")
         await asyncio.sleep(3)
+        purge_counter = 0
         while True:
             try:
                 tasks = [self.check_service(svc) for svc in SERVICES]
                 await asyncio.gather(*tasks)
                 self._detect_degradation()
+
+                # L13: WebSocket broadcast изменений
+                current_state = {name: s.to_dict() for name, s in self.statuses.items()}
+                for name, cur in current_state.items():
+                    prev = self._last_broadcast_state.get(name, {})
+                    if cur.get("is_alive") != prev.get("is_alive"):
+                        await self._broadcaster.broadcast_status_change(name, prev, cur)
+                self._last_broadcast_state = current_state
+
+                # L13: Alert engine check
+                await self._alert_engine.evaluate(current_state)
+
+                # L15: Auto-Recovery — для dead сервисов (3+ consecutive fails)
+                for name, st in current_state.items():
+                    if not st.get("is_alive"):
+                        # Передаём full state для slot health check
+                        st["_all_statuses"] = current_state
+                        await self._auto_recovery.on_service_dead(name, st)
+
                 self._save_status()
+
+                # L13: Purge раз в час
+                purge_counter += 1
+                if purge_counter >= 360:  # ~раз в час (10 сек * 360 = 3600 сек)
+                    self._purge_old_history()
+                    purge_counter = 0
+
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL)
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
@@ -288,9 +419,12 @@ async def start_http_server():
     async def health_ping(request):
         return web.json_response({
             "status": "ok",
-            "engine": "HealthEngine v3.2",
+            "engine": "HealthEngine v3.5 L15",
             "config_driven": True,
-            "monitored_services": len(SERVICES)
+            "monitored_services": len(SERVICES),
+            "ws_enabled": True,
+            "alert_engine": True,
+            "history_db": HEALTH_DB,
         })
 
     app = web.Application()
@@ -300,6 +434,191 @@ async def start_http_server():
     app.router.add_get("/api/status", health_summary)
     app.router.add_get("/status", health_summary)
     app.router.add_get("/health", health_ping)
+
+    # ═══ L5T: Dead-Letter Sync API ═══
+    async def dlq_sync(request):
+        try:
+            from dead_letter import get_dlq
+            data = await request.json()
+            to_pubkey = data.get("pubkey", "")
+            since = data.get("since", 0)
+            if not to_pubkey:
+                return web.json_response({"ok": False, "error": "pubkey required"}, status=400)
+            dlq = get_dlq()
+            messages = await dlq.sync(to_pubkey, since)
+            return web.json_response({
+                "ok": True,
+                "count": len(messages),
+                "messages": [m.to_dict() for m in messages],
+            })
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    app.router.add_post("/api/v1/deadletter/sync", dlq_sync)
+
+    async def dlq_stats(request):
+        try:
+            from dead_letter import get_dlq
+            dlq = get_dlq()
+            return web.json_response({"ok": True, **dlq.stats()})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    app.router.add_get("/api/v1/deadletter/stats", dlq_stats)
+
+    # ═══ L13: Dashboard API + WebSocket ═══
+    async def health_dashboard(request):
+        """GET /api/v1/health/dashboard — JSON для frontend-виджета."""
+        summary = engine.get_health_summary()
+        services = summary.get("services", {})
+        total = len(services)
+        alive = sum(1 for s in services.values() if s.get("is_alive"))
+        dead = total - alive
+
+        # Иерархия по слоям
+        layers = {}
+        for name, s in services.items():
+            layer = "other"
+            if name.startswith("nostr_bridge"):
+                layer = "nostr"
+            elif name in ("smart_router", "route_engine", "content_router"):
+                layer = "routing"
+            elif name in ("external_gateway", "cross_mesh_bridge"):
+                layer = "gateway"
+            elif name in ("identity_api", "verifier"):
+                layer = "identity"
+            elif name in ("supervisor", "relay_mesh_api", "relay_v2"):
+                layer = "infra"
+            layers.setdefault(layer, []).append(s)
+
+        return web.json_response({
+            "overall": "healthy" if dead == 0 else "degraded" if dead <= 3 else "critical",
+            "summary": {
+                "total": total,
+                "alive": alive,
+                "dead": dead,
+                "degraded": sum(1 for s in services.values() if s.get("degraded")),
+                "health_pct": summary.get("summary", {}).get("health_pct", 0),
+            },
+            "engine": {
+                "uptime": summary.get("engine_uptime_seconds", 0),
+                "version": "3.5",
+            },
+            "degradation": summary.get("degradation_modes", {}),
+            "layers": {
+                name: {
+                    "alive": sum(1 for s in svcs if s.get("is_alive")),
+                    "total": len(svcs),
+                    "services": [s.get("name") for s in svcs],
+                }
+                for name, svcs in layers.items()
+            },
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+
+    app.router.add_get("/api/v1/health/dashboard", health_dashboard)
+
+    # L13: WebSocket endpoint
+    broadcaster = get_broadcaster()
+    app.router.add_get("/api/v1/health/ws", broadcaster.ws_handler)
+
+    # L13: History endpoint (последние N записей по сервису)
+    async def health_history(request):
+        name = request.query.get("service", "")
+        limit = int(request.query.get("limit", 100))
+
+        if not name:
+            return web.json_response({"ok": False, "error": "service param required"}, status=400)
+
+        try:
+            cur = engine._db_conn.execute(
+                "SELECT checked_at, status, latency_ms, uptime_seconds "
+                "FROM health_history WHERE service_name = ? "
+                "ORDER BY checked_at DESC LIMIT ?",
+                (name, limit)
+            )
+            rows = [
+                {
+                    "time": r[0],
+                    "status": r[1],
+                    "latency_ms": r[2],
+                    "uptime": r[3],
+                }
+                for r in cur.fetchall()
+            ]
+            return web.json_response({"ok": True, "service": name, "history": rows})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    app.router.add_get("/api/v1/health/history", health_history)
+
+    # ═══ L14: Alert Engine API ═══
+    alert_engine = get_alert_engine()
+
+    async def alerts_list(request):
+        limit = int(request.query.get("limit", 20))
+        active_only = request.query.get("active", "").lower() == "true"
+        alerts = alert_engine.get_alerts(limit=limit, active_only=active_only)
+        return web.json_response({"ok": True, "count": len(alerts), "alerts": alerts})
+
+    async def alerts_active(request):
+        alerts = alert_engine.get_active_alerts()
+        return web.json_response({"ok": True, "count": len(alerts), "alerts": alerts})
+
+    async def alerts_ack(request):
+        alert_id = request.match_info.get("alert_id", "")
+        if not alert_id:
+            return web.json_response({"ok": False, "error": "alert_id required"}, status=400)
+        ok = await alert_engine.acknowledge(alert_id)
+        return web.json_response({"ok": ok, "alert_id": alert_id})
+
+    async def alerts_reload(request):
+        alert_engine.reload_rules()
+        return web.json_response({"ok": True, "rules_count": len(alert_engine.rules)})
+
+    app.router.add_get("/api/v1/alerts", alerts_list)
+    app.router.add_get("/api/v1/alerts/active", alerts_active)
+    app.router.add_post("/api/v1/alerts/ack/{alert_id}", alerts_ack)
+    app.router.add_post("/api/v1/alerts/reload", alerts_reload)
+
+    # ═══ L15: Auto-Recovery API ═══
+    recovery = get_auto_recovery()
+
+    async def recovery_stats(request):
+        return web.json_response({
+            "ok": True,
+            "stats": recovery.get_stats(),
+            "strategies": list(recovery.strategies.keys()),
+            "daily_count": recovery._daily_count,
+            "daily_limit": recovery.config.get("max_daily_total", 30),
+        })
+
+    async def recovery_events(request):
+        service = request.query.get("service", "")
+        limit = int(request.query.get("limit", 20))
+        events = recovery.get_recovery_events(service_name=service, limit=limit)
+        return web.json_response({"ok": True, "count": len(events), "events": events})
+
+    async def recovery_analysis(request):
+        analysis = recovery.get_analysis()
+        return web.json_response({"ok": True, "count": len(analysis), "analysis": analysis})
+
+    async def recovery_reset(request):
+        service = request.match_info.get("service", "")
+        if not service:
+            return web.json_response({"ok": False, "error": "service required"}, status=400)
+        recovery.reset_service(service)
+        return web.json_response({"ok": True, "service": service})
+
+    async def recovery_reload(request):
+        recovery.reload_config()
+        return web.json_response({"ok": True, "strategies": len(recovery.strategies)})
+
+    app.router.add_get("/api/v1/recovery/stats", recovery_stats)
+    app.router.add_get("/api/v1/recovery/events", recovery_events)
+    app.router.add_get("/api/v1/recovery/analysis", recovery_analysis)
+    app.router.add_post("/api/v1/recovery/reset/{service}", recovery_reset)
+    app.router.add_post("/api/v1/recovery/reload", recovery_reload)
 
     engine_port = config.get("orchestration.health_engine.port", 9999)
     runner = web.AppRunner(app)
