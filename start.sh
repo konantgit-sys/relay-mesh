@@ -32,7 +32,7 @@ for i in $(seq 1 30); do
 done
 if ! redis-cli ping 2>/dev/null | grep -q "PONG"; then
     echo "[start.sh] ❌ Redis не отвечает через 30с — запускаю..."
-    redis-server --daemonize yes 2>/dev/null
+    redis-server /etc/redis/redis.conf 2>/dev/null
     sleep 2
 fi
 
