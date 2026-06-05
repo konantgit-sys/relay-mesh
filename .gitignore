@@ -17,3 +17,5 @@ battle_test.py
 deep_test.py
 external_agent_test.py
 test_agent_listener.py
+workflow/
+agents/
