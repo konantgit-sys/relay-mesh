@@ -1,0 +1,205 @@
+{
+  "version": 10,
+  "node_id": "node-0",
+  "exported_at": 1781165231.421942,
+  "nodes": {
+    "topic:bitcoin:defi": {
+      "node_id": "topic:bitcoin:defi",
+      "node_type": "topic",
+      "last_seen": 1781164897.0836947,
+      "status": "active",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "node_news": {
+      "node_id": "node_news",
+      "node_type": "agent",
+      "last_seen": 1781162080.5279355,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "unknown": {
+      "node_id": "unknown",
+      "node_type": "agent",
+      "last_seen": 1781164665.7509902,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "node_crypto": {
+      "node_id": "node_crypto",
+      "node_type": "agent",
+      "last_seen": 1781162080.5248618,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "node_tech": {
+      "node_id": "node_tech",
+      "node_type": "agent",
+      "last_seen": 1781162080.5269413,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "test_p10": {
+      "node_id": "test_p10",
+      "node_type": "agent",
+      "last_seen": 0.0,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "node_finance": {
+      "node_id": "node_finance",
+      "node_type": "agent",
+      "last_seen": 1781162080.5259745,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "agent_B": {
+      "node_id": "agent_B",
+      "node_type": "agent",
+      "last_seen": 1781162064.4661205,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "agent_C": {
+      "node_id": "agent_C",
+      "node_type": "agent",
+      "last_seen": 1781162064.4661205,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "agent_A": {
+      "node_id": "agent_A",
+      "node_type": "agent",
+      "last_seen": 1781162064.4661205,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    },
+    "node_ai": {
+      "node_id": "node_ai",
+      "node_type": "agent",
+      "last_seen": 1781162080.52353,
+      "status": "online",
+      "pubkey": "",
+      "transport_hint": ""
+    }
+  },
+  "edges": {
+    "agent_A→agent_C": {
+      "source": "agent_A",
+      "target": "agent_C",
+      "transport": "wifi",
+      "latency_ms": 15,
+      "success_rate": 0.8513708965135988,
+      "last_success": 1781162064.4661205,
+      "nack_count": 0,
+      "weight": 2.0013
+    },
+    "agent_B→agent_A": {
+      "source": "agent_B",
+      "target": "agent_A",
+      "transport": "wifi",
+      "latency_ms": 15,
+      "success_rate": 0.8513708965135988,
+      "last_success": 1781162064.4661205,
+      "nack_count": 0,
+      "weight": 2.0013
+    },
+    "agent_C→agent_B": {
+      "source": "agent_C",
+      "target": "agent_B",
+      "transport": "wifi",
+      "latency_ms": 15,
+      "success_rate": 0.8513708965135988,
+      "last_success": 1781162064.4661205,
+      "nack_count": 0,
+      "weight": 2.0013
+    },
+    "agent_A→agent_B": {
+      "source": "agent_A",
+      "target": "agent_B",
+      "transport": "wifi",
+      "latency_ms": 15,
+      "success_rate": 0.8513708965135988,
+      "last_success": 1781162064.4661205,
+      "nack_count": 0,
+      "weight": 2.0013
+    },
+    "topic:bitcoin:defi→agent-002": {
+      "source": "topic:bitcoin:defi",
+      "target": "agent-002",
+      "transport": "expertise",
+      "latency_ms": 0.0,
+      "success_rate": 1.0,
+      "last_success": 0.0,
+      "nack_count": 0,
+      "weight": 0.5
+    },
+    "topic:bitcoin:defi→agent-001": {
+      "source": "topic:bitcoin:defi",
+      "target": "agent-001",
+      "transport": "expertise",
+      "latency_ms": 0.0,
+      "success_rate": 1.0,
+      "last_success": 1781164897.0851884,
+      "nack_count": 0,
+      "weight": 0.5
+    },
+    "agent_B→agent_C": {
+      "source": "agent_B",
+      "target": "agent_C",
+      "transport": "wifi",
+      "latency_ms": 15,
+      "success_rate": 0.8513708965135988,
+      "last_success": 1781162064.4661205,
+      "nack_count": 0,
+      "weight": 2.0013
+    },
+    "agent_C→agent_A": {
+      "source": "agent_C",
+      "target": "agent_A",
+      "transport": "wifi",
+      "latency_ms": 15,
+      "success_rate": 0.8513708965135988,
+      "last_success": 1781162064.4661205,
+      "nack_count": 0,
+      "weight": 2.0013
+    }
+  },
+  "adj": {
+    "agent_A": [
+      "agent_B",
+      "agent_C"
+    ],
+    "agent_B": [
+      "agent_A",
+      "agent_C"
+    ],
+    "agent_C": [
+      "agent_A",
+      "agent_B"
+    ],
+    "topic:bitcoin:defi": [
+      "agent-001",
+      "agent-002"
+    ]
+  },
+  "stats": {
+    "total_nodes": 11,
+    "total_edges": 8,
+    "avg_weight": 1.63,
+    "avg_success_rate": 0.889,
+    "nodes_online": 0,
+    "nodes_offline": 11,
+    "nodes_degraded": 0,
+    "ready": true
+  }
+}
