@@ -1,132 +1,130 @@
 {
-  "test_direct": {
+  "abc123ai00000000000000000000000000000000001": {
     "capabilities": [
-      "gossip",
-      "mesh"
+      "ai_analysis",
+      "ml_inference"
     ],
     "template": {
-      "gossip": {
-        "channel": "gossip",
+      "ai_analysis": {
+        "domain": "ai",
         "kinds": [
-          39000,
-          39001,
-          39002
+          39020
         ],
-        "latency": "2-50ms"
+        "description": "AI analysis and inference"
       },
-      "mesh": {
-        "channel": "mesh",
+      "ml_inference": {
+        "domain": "ai",
         "kinds": [
-          39003,
-          39010,
-          39011
+          39020
         ],
-        "latency": "50-100ms"
+        "description": "ML model inference"
       }
     },
-    "registered_at": 1778939666.122659,
-    "updated_at": 1778939666.1226594
+    "registered_at": 1781162080.5304384,
+    "updated_at": 1781162080.5304387
   },
-  "http_test_agent": {
+  "def456crypto0000000000000000000000000000002": {
     "capabilities": [
-      "gossip",
-      "mesh",
-      "nostr_bridge",
-      "auth_provider"
+      "crypto_trading",
+      "blockchain_indexing"
     ],
     "template": {
-      "gossip": {
-        "channel": "gossip",
+      "crypto_trading": {
+        "domain": "crypto",
         "kinds": [
-          39000,
-          39001,
-          39002
+          39021
         ],
-        "latency": "2-50ms"
+        "description": "Cryptocurrency trading"
       },
-      "mesh": {
-        "channel": "mesh",
+      "blockchain_indexing": {
+        "domain": "crypto",
         "kinds": [
-          39003,
-          39010,
-          39011
+          39021
         ],
-        "latency": "50-100ms"
+        "description": "Blockchain data indexing"
+      }
+    },
+    "registered_at": 1781162080.530803,
+    "updated_at": 1781162080.5308032
+  },
+  "ghi789btc0000000000000000000000000000000003": {
+    "capabilities": [
+      "btc_trading",
+      "bitcoin_analytics"
+    ],
+    "template": {
+      "btc_trading": {
+        "domain": "btc",
+        "kinds": [
+          39022
+        ],
+        "description": "Bitcoin trading signals"
       },
-      "nostr_bridge": {
-        "channel": "nostr",
+      "bitcoin_analytics": {
+        "domain": "btc",
         "kinds": [
-          1,
-          7,
-          9734,
-          10002,
-          22242
+          39022
         ],
-        "latency": "1-5s"
+        "description": "Bitcoin on-chain analytics"
+      }
+    },
+    "registered_at": 1781162080.5322087,
+    "updated_at": 1781162080.532209
+  },
+  "jkl012nostr000000000000000000000000000000004": {
+    "capabilities": [
+      "nostr_relay",
+      "nostr_indexer"
+    ],
+    "template": {
+      "nostr_relay": {
+        "domain": "nostr",
+        "kinds": [
+          39023
+        ],
+        "description": "Nostr relay operation"
       },
-      "auth_provider": {
-        "feature": "nip42_auth",
-        "methods": [
-          "schnorr",
-          "session"
-        ]
+      "nostr_indexer": {
+        "domain": "nostr",
+        "kinds": [
+          39023
+        ],
+        "description": "Nostr content indexing"
       }
     },
-    "registered_at": 1778939688.5580447,
-    "updated_at": 1778939688.558045
+    "registered_at": 1781162080.5330884,
+    "updated_at": 1781162080.5330887
   },
-  "a80666b91a83320bd4984fc7dab68b72af03fba38084b2f123468b237a350a67": {
+  "mno345multi000000000000000000000000000000005": {
     "capabilities": [
-      "gossip"
+      "ai_analysis",
+      "crypto_trading",
+      "defi_analysis"
     ],
     "template": {
-      "gossip": {
-        "channel": "gossip",
+      "ai_analysis": {
+        "domain": "ai",
         "kinds": [
-          39000,
-          39001,
-          39002
+          39020
         ],
-        "latency": "2-50ms"
+        "description": "AI analysis and inference"
+      },
+      "crypto_trading": {
+        "domain": "crypto",
+        "kinds": [
+          39021
+        ],
+        "description": "Cryptocurrency trading"
+      },
+      "defi_analysis": {
+        "domain": "defi",
+        "kinds": [
+          39024
+        ],
+        "description": "DeFi protocol analysis"
       }
     },
-    "registered_at": 1779114564.3427317,
-    "updated_at": 1779114564.3427317
-  },
-  "3825fbe897d03c9f309aedb2e1f1205c5b689e3789a3584e271e36be9210e7e1": {
-    "capabilities": [
-      "gossip"
-    ],
-    "template": {
-      "gossip": {
-        "channel": "gossip",
-        "kinds": [
-          39000,
-          39001,
-          39002
-        ],
-        "latency": "2-50ms"
-      }
-    },
-    "registered_at": 1779114562.3224814,
-    "updated_at": 1779114562.3224816
-  },
-  "48e6b8fd8d4ae367f1ffa79ba37660a7aabc78201987185a1cf3956c8e83c563": {
-    "capabilities": [
-      "gossip"
-    ],
-    "template": {
-      "gossip": {
-        "channel": "gossip",
-        "kinds": [
-          39000,
-          39001,
-          39002
-        ],
-        "latency": "2-50ms"
-      }
-    },
-    "registered_at": 1779114560.3213267,
-    "updated_at": 1779114560.3213272
+    "registered_at": 1781162080.5337925,
+    "updated_at": 1781162080.5337927
   }
 }
