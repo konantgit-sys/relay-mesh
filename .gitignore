@@ -20,3 +20,4 @@ test_agent_listener.py
 workflow/
 agents/
 *.bak.*
+snapshots/
