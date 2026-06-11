@@ -220,11 +220,19 @@ class AutoRecovery:
             # Step 4: Result
             if success:
                 self._stats["successful"] += 1
-                logger.info(f"✅ {service_name} recovered successfully")
+                self._consecutive_fails.pop(service_name, None)  # Reset on success
+                self._recovery_locks.pop(service_name, None)     # Clear service cooldown
+                logger.info(f"✅ {service_name} recovered successfully "
+                           f"(consec_fails reset)")
             else:
                 self._stats["failed"] += 1
                 self._stats["escalated"] += 1
-                logger.warning(f"❌ {service_name} recovery failed — escalated")
+                # Exponential backoff: lock service for 2^(fail_count-3) * 60 sec
+                fail_count = self._consecutive_fails.get(service_name, 3)
+                backoff_sec = min(2 ** (fail_count - 3) * 60, 3600)
+                self._recovery_locks[service_name] = time.time() + backoff_sec
+                logger.warning(f"❌ {service_name} recovery failed — escalated "
+                              f"(cooldown: {backoff_sec}s)")
 
             return success
 

@@ -208,18 +208,22 @@ async def monitoring():
         supervisor = {"status": "unavailable"}
 
     # Uptime / system
-    import psutil
-    uptime = time.time() - psutil.boot_time()
-    mem = psutil.virtual_memory()
+    try:
+        import psutil
+        uptime = time.time() - psutil.boot_time()
+        mem = psutil.virtual_memory()
+        sys_info = {
+            "uptime_hours": round(uptime / 3600, 1),
+            "memory_used_pct": mem.percent,
+            "memory_available_mb": round(mem.available / 1024 / 1024),
+        }
+    except Exception:
+        sys_info = {"uptime_hours": 0, "memory_used_pct": 0, "memory_available_mb": 0}
 
     return {
         "ts": time.time(),
         "supervisor": supervisor,
-        "system": {
-            "uptime_hours": round(uptime / 3600, 1),
-            "memory_used_pct": mem.percent,
-            "memory_available_mb": round(mem.available / 1024 / 1024),
-        },
+        "system": sys_info,
         "layer_details": {layer: await _get_layer_status(layer, port,
             {"l2":"/api/v1/health","enc":"/api/v1/health","zk":"/api/v1/health",
              "l4":"/api/v1/stats","priv":"/api/v1/health","l5":"/health",

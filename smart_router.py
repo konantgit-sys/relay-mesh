@@ -53,6 +53,9 @@ from graceful_degradation import GracefulDegradation
 from rate_limiter import RateLimiter
 from message_sequencer import SeqNumTracker, ReorderBuffer, reorder_timeout_loop, reorder_cleanup_loop
 from message_deduplicator import MessageDeduplicator, dedup_cleanup_loop
+from priority_queue import PriorityQueue
+from agent_registry import AgentRegistry
+from marketplace_registry import MarketplaceRegistry
 
 # Level 2: CPU-bound crypto в ProcessPool
 sys.path.insert(0, "/home/agent/data/sites/relay-mesh")
@@ -68,6 +71,14 @@ from router_policy import (
     TC_BEST_KEY, TC_POLICY_KEY, BP_MAX_CONCURRENT, BP_MAX_QUEUE_TIME,
     POLICY_KEY,
 )
+
+# Phase 4 (Knowledge Graph): графовая маршрутизация
+try:
+    from knowledge_graph import KnowledgeGraph, GraphNode, GraphEdge
+    KG_AVAILABLE = True
+except ImportError:
+    KG_AVAILABLE = False
+    print("[Router] ⚠️ Knowledge Graph not available")
 
 # ─── Настройки (из mesh_config.yaml) ──────────────────────────────────
 LISTEN_HOST = config.get("transport.smart_router.host", "0.0.0.0")
@@ -192,6 +203,23 @@ class SmartRouter:
         # ═══ Фаза 8: Event subscribers (push-канал для агентов) ═══
         self._event_subscribers: dict[int, tuple] = {}  # id → (writer, agent_name)
         self._sub_next_id = 0
+
+        # ═══ Phase 4: Knowledge Graph for targeted routing ═══
+        self.graph = None
+        if KG_AVAILABLE:
+            try:
+                import redis as _r
+                self._graph_redis = _r.Redis(host="localhost", port=6379, db=0, decode_responses=False)
+                self._graph_redis.ping()
+                self.graph = KnowledgeGraph(self._graph_redis)
+                loaded = self.graph.load_from_redis()
+                print(f"[Router] 📊 KnowledgeGraph: {'loaded' if loaded else 'empty'}")
+                self.stats["graph_paths_found"] = 0
+                self.stats["graph_fallbacks"] = 0
+                self.stats["graph_broadcasts"] = 0
+            except Exception as e:
+                print(f"[Router] ⚠️ KnowledgeGraph init failed: {e}")
+                self.graph = None
         # ═══ Фаза 1 Rate Limiter (token bucket) ═══
         self._rate_limiter = RateLimiter(rate=100.0, burst=200)
         # ═══ Фаза 3 Message Ordering (seq_num + reorder buffer) ═══
@@ -199,6 +227,13 @@ class SmartRouter:
         self._reorder = ReorderBuffer()
         # ═══ Фаза 4 Message Deduplication ═══
         self._dedup = MessageDeduplicator()
+        # ═══ Фаза 5 Message Prioritization ═══
+        self._priority_queue = PriorityQueue()
+        self._pq_workers = 2  # кол-во worker-корутин (мало = CRITICAL не ждёт долго)
+        # ═══ Фаза 6 Agent Capability Registry ═══
+        self._agent_registry = AgentRegistry()
+        # ═══ Фаза 6b Marketplace Registry (Avito для агентов) ═══
+        self._marketplace = MarketplaceRegistry()
 
     # ═══ Фаза 6.2: In-memory Policy Cache ═══
     async def _load_policy_cache(self):
@@ -1234,6 +1269,100 @@ class SmartRouter:
             except Exception as e:
                 print(f"[SelfLearn] Error: {e}")
 
+    # ═══════════════════════════════════════════════════════════
+    # Phase 4: Knowledge Graph методы
+    # ═══════════════════════════════════════════════════════════
+
+    def _update_graph_from_msg(self, msg: dict):
+        """Обновить Knowledge Graph из сообщения.
+
+        Извлекает source (from/pubkey), target (to), transport (meta.transport),
+        и обновляет узлы/рёбра в графе.
+        """
+        if not self.graph:
+            return
+
+        now = time.time()
+        pubkey = msg.get("pubkey", "")
+        from_id = msg.get("from", pubkey or "?")
+        to_id = msg.get("to", "")
+        kind = msg.get("kind", 0)
+        meta = msg.get("meta", {})
+        transport = meta.get("transport", "mesh")
+
+        # 1. Source — всегда создаём/обновляем
+        if from_id and from_id != "?":
+            node = self.graph.get_node(from_id)
+            if node:
+                node.last_seen = now
+                node.status = "online"
+                self.graph.upsert_node(node)
+            else:
+                self.graph.upsert_node(GraphNode(
+                    node_id=from_id,
+                    node_type="agent",
+                    last_seen=now,
+                    status="online",
+                ))
+
+        # 2. Target (если есть) → ребро
+        if to_id and to_id != "broadcast" and to_id != "?" and from_id != to_id:
+            edge = self.graph.get_edge(from_id, to_id)
+            if not edge:
+                self.graph.upsert_edge(GraphEdge(
+                    source=from_id,
+                    target=to_id,
+                    transport=transport,
+                    last_success=now,
+                ))
+            else:
+                edge.last_success = now
+                if edge.transport == "unknown" and transport != "unknown":
+                    edge.transport = transport
+                self.graph.upsert_edge(edge)
+
+        # 3. Heartbeat → обновить статус
+        if kind == HEARTBEAT_KIND and from_id and from_id != "?":
+            self.graph.update_node_status(from_id, "online", now)
+
+    def _route_via_graph(self, target_id: str, msg: dict) -> dict | None:
+        """Phase 4: попытаться найти маршрут до target через Knowledge Graph.
+
+        Возвращает словарь с found, path, next_hop, total_weight, fallback
+        или None если граф не готов.
+        """
+        if not self.graph or not self.graph.is_ready:
+            return None
+
+        source_id = msg.get("from", "smart_router")
+
+        # Пробуем надёжный путь
+        path = self.graph.find_path(source_id, target_id)
+        fallback = False
+
+        if not path:
+            path = self.graph.find_path_fallback(source_id, target_id)
+            fallback = True
+            self.stats["graph_fallbacks"] += 1
+        else:
+            self.stats["graph_paths_found"] += 1
+
+        if not path:
+            return {"found": False, "path": None, "next_hop": None,
+                    "total_weight": 0.0, "fallback": True}
+
+        info = self.graph.get_path_info(path)
+        next_hop = path[1] if len(path) > 1 else None
+
+        return {
+            "found": True,
+            "path": path,
+            "next_hop": next_hop,
+            "hops": info["hops"],
+            "total_weight": info["total_weight"],
+            "fallback": fallback,
+        }
+
     async def route_message(self, msg: dict) -> dict:
         self.stats["received"] += 1
 
@@ -1243,6 +1372,34 @@ class SmartRouter:
         kind = msg.get("kind", 39002)
         priority = meta.get("priority", "normal")
         channel_pref = meta.get("channel", "auto")
+
+        # ═══ Phase 4: Knowledge Graph update ═══
+        self._update_graph_from_msg(msg)
+
+        # ═══ Phase 5: ACK/NACK → record_delivery ═══
+        if kind == 8011 and self.graph:
+            ack_source = msg.get("from", "")
+            ack_content = msg.get("content", msg.get("payload", {}))
+            if isinstance(ack_content, str):
+                try:
+                    ack_content = json.loads(ack_content)
+                except Exception:
+                    ack_content = {}
+            orig_source = ack_content.get("original_source", ack_content.get("from", ""))
+            orig_target = ack_content.get("original_target", ack_content.get("to", ""))
+            success = ack_content.get("success", ack_content.get("ok", True))
+            ack_latency = ack_content.get("latency_ms", ack_content.get("latency", 0))
+            if orig_source and orig_target:
+                self.graph.record_delivery(orig_source, orig_target, bool(success), float(ack_latency))
+                self.stats["graph_acks_processed"] += 1
+                print(f"[Router] 📊 ACK recorded: {orig_source[:12]}→{orig_target[:12]} "
+                      f"success={success} latency={ack_latency}ms")
+
+        # ═══ Phase 4: Targeted routing via graph ═══
+        to_full = msg.get("to", "")
+        graph_route = None
+        if self.graph and to_full and to_full != "broadcast" and to_full != "?":
+            graph_route = self._route_via_graph(to_full, msg)
 
         # ═══ Rate Limiter: token bucket per agent ═══
         if not self._rate_limiter.allow(from_agent):
@@ -1342,7 +1499,7 @@ class SmartRouter:
         try:
             sender_pubkey = event.get("pubkey", "")
             if sender_pubkey:
-                rep_weight = _get_reputation_weight(sender_pubkey)
+                rep_weight = get_reputation_weight(sender_pubkey)
                 if rep_weight < 0.3:
                     # Низкая репутация → только mesh (контролируемый канал)
                     if channel in ("nostr", "gossip", "gossip_data", "nostr_data"):
@@ -1350,7 +1507,29 @@ class SmartRouter:
                         channel = "mesh"
         except Exception:
             pass
-        
+
+        # ═══ Phase 4: Graph-aware routing override ═══
+        if graph_route and graph_route["found"]:
+            next_hop = graph_route.get("next_hop")
+            if next_hop and not self._cb.is_blocked("direct"):
+                channel = "direct"
+                self.stats["graph_routed_direct"] += 1
+                msg["meta"] = msg.get("meta", {})
+                msg["meta"]["graph_path"] = graph_route["path"]
+                msg["meta"]["graph_next_hop"] = next_hop
+                msg["meta"]["graph_weight"] = graph_route["total_weight"]
+                print(f"[Router] 📊 Graph route: {graph_route['path']} → next={next_hop} (direct)")
+            elif next_hop and not self._cb.is_blocked("mesh"):
+                channel = "mesh"
+                self.stats["graph_routed_mesh"] += 1
+                msg["meta"] = msg.get("meta", {})
+                msg["meta"]["graph_path"] = graph_route["path"]
+                msg["meta"]["graph_next_hop"] = next_hop
+                msg["meta"]["graph_weight"] = graph_route["total_weight"]
+                print(f"[Router] 📊 Graph route: {graph_route['path']} → next={next_hop} (mesh, direct blocked)")
+            else:
+                self.stats["graph_routed_fallback"] += 1
+
         # Шаг 2: собираем каналы для отправки (исключая CB-blocked)
         policy = self.get_policy(kind)
         channels_to_try = [ch for ch in [channel] if not self._cb.is_blocked(ch)]
@@ -1486,6 +1665,16 @@ class SmartRouter:
         if "seq" in msg:
             best_result["seq"] = msg["seq"]
 
+        # Phase 4: graph route info
+        if graph_route and graph_route["found"]:
+            best_result["graph"] = {
+                "path": graph_route["path"],
+                "next_hop": graph_route.get("next_hop"),
+                "hops": graph_route.get("hops", 0),
+                "weight": graph_route.get("total_weight", 0),
+                "fallback": graph_route.get("fallback", False),
+            }
+
         return best_result
 
     async def handle_client(self, reader, writer):
@@ -1608,6 +1797,177 @@ class SmartRouter:
                     await writer.drain()
                     continue
                 
+                # ═══ Фаза 6: Agent Capability Registry ═══
+                elif kind == "register_capability":
+                    agent_id = msg.get("from", "")
+                    capabilities = msg.get("capabilities", [])
+                    description = msg.get("description", "")
+                    if agent_id and capabilities:
+                        is_new = self._agent_registry.register(agent_id, capabilities, description)
+                        action = "registered" if is_new else "updated"
+                        writer.write(json.dumps({
+                            "ok": True, "channel": "capability_registry",
+                            "action": action, "agent": agent_id,
+                            "total_agents": self._agent_registry.stats["total_agents"]
+                        }) + b"\n")
+                    else:
+                        writer.write(json.dumps({"ok": False, "error": "missing agent_id or capabilities"}) + b"\n")
+                    await writer.drain()
+                    continue
+                
+                elif kind == "smart_query":
+                    topic = msg.get("payload", msg.get("query", ""))
+                    from_agent = msg.get("from", "")
+                    top_k = msg.get("top_k", 5)
+                    
+                    if not topic:
+                        writer.write(json.dumps({"ok": False, "error": "missing query topic"}) + b"\n")
+                        await writer.drain()
+                        continue
+                    
+                    matches = self._agent_registry.query(topic, top_k)
+                    matching_agents = [aid for aid, score in matches if score > 0.1]
+                    
+                    if not matching_agents:
+                        writer.write(json.dumps({
+                            "ok": True, "channel": "smart_query_result",
+                            "query": topic, "matches": [],
+                            "message": "no matching agents found"
+                        }) + b"\n")
+                        await writer.drain()
+                        continue
+                    
+                    # Broadcast query только matching агентам
+                    query_msg = {
+                        "type": "smart_query",
+                        "from": from_agent,
+                        "query": topic,
+                        "payload": topic,
+                        "meta": {"query_id": msg.get("meta", {}).get("query_id", str(int(time.time()*1000)))},
+                        "ts": time.time(),
+                    }
+                    
+                    pushed_count = 0
+                    for target_id in matching_agents:
+                        for sid, (sw, sub_info) in list(self._event_subscribers.items()):
+                            if sub_info.get("agent_id") == target_id:
+                                try:
+                                    query_msg["to"] = target_id
+                                    sw.write(json.dumps(query_msg) + b"\n")
+                                    await sw.drain()
+                                    pushed_count += 1
+                                except (BrokenPipeError, ConnectionResetError):
+                                    self._event_subscribers.pop(sid, None)
+                    
+                    writer.write(json.dumps({
+                        "ok": True, "channel": "smart_query_result",
+                        "query": topic, "matches": matches[:top_k],
+                        "pushed_to": pushed_count,
+                        "total_matching": len(matching_agents),
+                    }) + b"\n")
+                    await writer.drain()
+                    continue
+                
+                # ═══ Фаза 6b: Marketplace Registry (Avito для агентов) ═══
+                elif kind == "register_marketplace":
+                    agent_id = msg.get("from", "")
+                    offers = msg.get("offers", [])
+                    wants = msg.get("wants", [])
+                    contact = msg.get("contact", "")
+                    pubkey = msg.get("pubkey", "")
+                    
+                    if not agent_id or (not offers and not wants):
+                        writer.write(json.dumps({"ok": False, "error": "need agent_id + offers/wants"}) + b"\n")
+                        await writer.drain()
+                        continue
+                    
+                    is_new = self._marketplace.register(agent_id, offers, wants, contact, pubkey)
+                    action = "registered" if is_new else "updated"
+                    st = self._marketplace.stats
+                    writer.write(json.dumps({
+                        "ok": True, "channel": "marketplace",
+                        "action": action, "agent": agent_id,
+                        "category": self._marketplace._agents[agent_id]["category"],
+                        "total_agents": st["total_agents"],
+                        "categories": st["categories"],
+                    }) + b"\n")
+                    await writer.drain()
+                    continue
+                
+                elif kind == "marketplace_search":
+                    query = msg.get("payload", msg.get("query", ""))
+                    category = msg.get("category", None)
+                    top_k = msg.get("top_k", 10)
+                    
+                    if not query:
+                        writer.write(json.dumps({"ok": False, "error": "missing query"}) + b"\n")
+                        await writer.drain()
+                        continue
+                    
+                    results = self._marketplace.search(query, top_k, category)
+                    
+                    try:
+                        # orjson: возвращает bytes, unicode по умолчанию
+                        resp_bytes = json.dumps({
+                            "ok": True, "channel": "marketplace_results",
+                            "query": query,
+                            "total_matches": len(results),
+                            "results": results,
+                        })
+                        writer.write(resp_bytes + b"\n")
+                        await writer.drain()
+                    except Exception as e:
+                        writer.write(json.dumps({"ok": False, "error": str(e)}) + b"\n")
+                        await writer.drain()
+                    continue
+                
+                elif kind == "marketplace_connect":
+                    from_agent = msg.get("from", "")
+                    to_agent = msg.get("to", "")
+                    message = msg.get("payload", "")
+                    
+                    if not from_agent or not to_agent:
+                        writer.write(json.dumps({"ok": False, "error": "need from/to"}) + b"\n")
+                        await writer.drain()
+                        continue
+                    
+                    # Проверить что оба агента в реестре
+                    from_info = self._marketplace._agents.get(from_agent, {})
+                    to_info = self._marketplace._agents.get(to_agent, {})
+                    
+                    if not to_info:
+                        writer.write(json.dumps({"ok": False, "error": f"agent {to_agent} not found"}) + b"\n")
+                        await writer.drain()
+                        continue
+                    
+                    # Переслать запрос на связь целевому агенту (если он онлайн)
+                    connect_msg = {
+                        "type": "connection_request",
+                        "from": from_agent,
+                        "from_contact": from_info.get("contact", ""),
+                        "message": message,
+                        "ts": time.time(),
+                    }
+                    
+                    pushed = False
+                    for sid, (sw, sub_info) in list(self._event_subscribers.items()):
+                        if sub_info.get("agent_id") == to_agent:
+                            try:
+                                sw.write(json.dumps(connect_msg) + b"\n")
+                                await sw.drain()
+                                pushed = True
+                            except (BrokenPipeError, ConnectionResetError):
+                                self._event_subscribers.pop(sid, None)
+                    
+                    writer.write(json.dumps({
+                        "ok": True, "channel": "marketplace_connect",
+                        "from": from_agent, "to": to_agent,
+                        "target_contact": to_info.get("contact", ""),
+                        "delivered": pushed,
+                    }) + b"\n")
+                    await writer.drain()
+                    continue
+                
                 # ═══ Фаза 9: Push всем подписанным агентам (кроме отправителя) ═══
                 from_agent = msg.get("from", "")
                 
@@ -1642,16 +2002,40 @@ class SmartRouter:
                 }
                 await self._push_to_subscribers(event_for_push, exclude_writer=writer)
                 
+                # ═══ Phase 5: ACK/NACK graph record_delivery (для всех путей, включая pipeline_feed) ═══
+                if kind == 8011 and self.graph:
+                    ack_content = msg.get("content", msg.get("payload", {}))
+                    if isinstance(ack_content, str):
+                        try:
+                            ack_content = json.loads(ack_content)
+                        except Exception:
+                            ack_content = {}
+                    orig_source = ack_content.get("original_source", ack_content.get("from", ""))
+                    orig_target = ack_content.get("original_target", ack_content.get("to", ""))
+                    success = ack_content.get("success", ack_content.get("ok", True))
+                    ack_latency = ack_content.get("latency_ms", ack_content.get("latency", 0))
+                    if orig_source and orig_target:
+                        self.graph.record_delivery(orig_source, orig_target, bool(success), float(ack_latency))
+                        self.stats["graph_acks_processed"] += 1
+                        print(f"[Router] 📊 ACK (pipeline): {orig_source[:12]}→{orig_target[:12]} "
+                              f"success={success}")
+                
                 # pipeline_feed от RE — только push, без роутинга (избегаем цикла RE→SR→CRV2→RE)
                 if kind == "pipeline_feed":
                     continue
 
-                result = await self.route_message(msg)
-                try:
-                    writer.write(json.dumps(result) + b"\n")
-                    await writer.drain()
-                except (BrokenPipeError, ConnectionResetError):
-                    break
+                # ═══ Фаза 5: Priority Queue (вместо прямого route_message) ═══
+                qm = await self._priority_queue.put(msg)
+                # Клиент получает мгновенное подтверждение
+                writer.write(json.dumps({
+                    "ok": True,
+                    "channel": "queued",
+                    "priority": qm.priority.name,
+                    "seq": msg.get("seq"),
+                    "queue_depth": self._priority_queue.sizes["total"]
+                }) + b"\n")
+                await writer.drain()
+                continue
 
         except asyncio.TimeoutError:
             self.stats["client_timeout"] += 1
@@ -1759,6 +2143,47 @@ class SmartRouter:
             except Exception as e:
                 print(f"[Dedup] cleanup error: {e}")
 
+    # ═══ Фаза 5: Priority Queue workers + aging ═══
+    async def _priority_worker(self, worker_id: int):
+        """Worker: вытаскивает из priority queue и обрабатывает.
+        
+        Стратегия: после каждой обработки проверяет CRITICAL очередь.
+        Это гарантирует, что CRITICAL не ждёт за NORMAL/HIGH.
+        """
+        print(f"[PQ] Worker #{worker_id} started")
+        while True:
+            try:
+                # ═══ СНАЧАЛА проверяем CRITICAL (мгновенно, без ожидания) ═══
+                qm = await self._priority_queue.try_get_critical()
+                if qm is None:
+                    # Нет CRITICAL — берём любое из очереди
+                    qm = await self._priority_queue.get()
+                
+
+                await self.route_message(qm.msg)
+                
+                wait = qm.age
+                if wait > 1.0:
+                    print(f"[PQ] Worker #{worker_id}: p={qm.priority.name} wait={wait:.2f}s")
+                
+                self.stats["pq_processed"] += 1
+                
+            except Exception as e:
+                self.stats["pq_errors"] += 1
+                print(f"[PQ] Worker #{worker_id} error: {e}")
+                await asyncio.sleep(0.1)
+
+    async def _priority_aging_loop(self):
+        """Фоновый цикл: проверка aging сообщений."""
+        while True:
+            await asyncio.sleep(5.0)
+            try:
+                promoted = await self._priority_queue.age_messages()
+                if promoted:
+                    print(f"[PQ] Aged up {promoted} messages")
+            except Exception as e:
+                print(f"[PQ] Aging error: {e}")
+
     async def run(self):
         global _GLOBAL_ROUTER
         _GLOBAL_ROUTER = self
@@ -1796,6 +2221,10 @@ class SmartRouter:
         print(f"[Router]    Phase 4: orjson + Health :{HEALTH_PORT}")
         print(f"[Router]    Phase 3: Message Ordering ENABLED (seq_num + reorder)")
         print(f"[Router]    Phase 4: Message Deduplication ENABLED")
+        print(f"[Router]    Phase 5: Priority Queue ENABLED ({self._pq_workers} workers, aging)")
+        print(f"[Router]    Phase 6: Agent Capability Registry ENABLED")
+        print(f"[Router]    Phase 6b: Marketplace Registry ENABLED (Avito для агентов)")
+        print(f"[Router]    Agent API: register_capability | smart_query | register_marketplace | marketplace_search | marketplace_connect")
 
         async def health_check(reader, writer):
             """HTTP endpoint: /health — общая статистика, /dht — детали DHT."""
