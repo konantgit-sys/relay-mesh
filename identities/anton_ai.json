@@ -1,19 +1,14 @@
 {
   "agent_name": "anton_ai",
-  "mesh_pubkey": "a80666b91a83320bd4984fc7dab68b72af03fba38084b2f123468b237a350a67",
-  "mesh_privkey": "3013862facd580ff5edc557e0cd0ed492af320c5be1e34c86cf55da93161f886",
-  "mesh_npub": "nmesh14qrxdwg6sveqh4ycflra4d5tw2hs87arszzt9ufrg69jx734pfnsja94ra",
-  "created_at": 1778945442.6997583,
-  "updated_at": 1779183745.5119917,
+  "mesh_pubkey": "ac052ffede952b54fdb73b873d7a5c8797dde5611d472511499cd7eccd528143",
+  "mesh_privkey": "7de516284fd12108f97968bf3bcc63a24326b34abc63993e2f11b260e907633e",
+  "mesh_npub": "nmesh14szjllk7j544fldh8wrn67jus7tametpr4rj2y2fnnt7en2js9psh3dq5q",
+  "packet_pubkey": "c598cecfe3a3410844902a31766ce9d42037e303eda8ce2f1114bded6397f139",
+  "packet_privkey": "53b44d0cb573f1fa408eabe80c02cca00573d5f7d934e31018f2953b93a08b6d",
+  "cipher_pubkey": "64d334426520342a5ae4a08a51e62f2e79934d3e1312e1b932a6be52cd7f6b09",
+  "cipher_privkey": "d08c8e4b14e2b83086f1946381c02ba942a657d3d1628e31c19f7ae69c410f51",
+  "created_at": 1780929679.2024052,
+  "updated_at": 1780929679.202406,
   "attestations": [],
-  "links": {
-    "nostr_npub": "npub1ctx8q47erp0zmpa2ylr5azq7syh2jtjn4l6luk3xtpewmgjgfl6qr2ds5m",
-    "nostr_nsec": "nsec1a2njy4y0hjcalz9exn8gxxc6dg25g099sx3ja3xadswgxmh8legqqqqp8pr0ey"
-  },
-  "packet_privkey": "7e129f40a5551929ae9f8fb91097189837db7030572ad8086f6af020d3900fec",
-  "packet_pubkey": "ea24d89b835ac9864179f7b4ce99617803f3926efbc5865f8e795ef9d6f32dbe",
-  "cipher_privkey": "10f92a9eb16a2e5483ccbbbd4680da4d9934c8dfeec1fe3c80f2979f4b8d5963",
-  "cipher_pubkey": "4df3be284d3806047efdb06c0633fa07db76d015cd15762d4cceb3237ef0a22b",
-  "pubkey_hex": "c2cc7057d9185e2d87aa27c74e881e812ea92e53aff5fe5a265872eda2484ff4",
-  "nsec_hex": "eaa722548fbcb1df88b934ce831b1a6a15443ca581a32ec4dd6c1c836ee7fe50"
+  "links": {}
 }

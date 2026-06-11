@@ -1,14 +1,14 @@
 {
   "agent_name": "archivist_ai",
-  "mesh_pubkey": "f7ef90f863ebab4a1b5164f309fa6d267bbb3bcbcd9097f52e8e20a82a31a3ed",
-  "mesh_privkey": "a36f7b5bb26d8f103c4557fb05373bb5aeae1cae3d3a2cc6fad06208e09465ca",
-  "mesh_npub": "nmesh17lhep7rraw455x63vnesn7ndyeamkw7tekgf0afw3cs2s23350ksuuywp5",
-  "packet_pubkey": "cde7226d9d86d3e5088aec23e97a172886ff8f550fec9c75c501cdd7124e2e9f",
-  "packet_privkey": "9cb3882d8de2ddc55b5420201ec5e2eaaf76884a68cca3356e7bf0753105a791",
-  "cipher_pubkey": "09d8ed6251b7eb43dd4eb7d2503477394ee41c89c184a867523a977fcd5f5b2d",
-  "cipher_privkey": "201ba39ed49bdca7e421c322d31a5dddbf61cae1dcb9dfc84b08aa3b32dd0d48",
-  "created_at": 1780650919.511884,
-  "updated_at": 1780650919.5118842,
+  "mesh_pubkey": "6afb8152163d5c881fa3490a6d67235a0cdcf306e624a77f588b040d9a1e535a",
+  "mesh_privkey": "f8284b9ac644bb23335755f0e6c96bf2798d24cfe3c72ee1f202f4dccdc9144c",
+  "mesh_npub": "nmesh1dtacz5sk84wgs8arfy9x6eertgxdeucxucj2wl6c3vzqmxs72ddq3zc5f0",
+  "packet_pubkey": "7619e203c936425bbd48b417acd3b7df46658c56b890dfd6b4898817503bfdb5",
+  "packet_privkey": "24117ea6f687a75ad07963134a74c02eb22e15b31af20d66f8a9d7e33ec9b12e",
+  "cipher_pubkey": "80046e81ec4de1dd2eef3fb6a2ce9c3cc2aef4d0e3db21539e40ecdc52bc544c",
+  "cipher_privkey": "5000163f75ce929dc181f57a4dae9adb88edefafb2b2f7b82f14d4ea180eac76",
+  "created_at": 1781164459.7899141,
+  "updated_at": 1781164459.7899146,
   "attestations": [],
   "links": {}
 }
