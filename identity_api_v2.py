@@ -153,6 +153,26 @@ async def identity_attest(data: dict):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+@app.post("/identity/create")
+async def identity_create(data: dict):
+    """Create mesh identity for a new agent."""
+    agent_name = data.get("agent_name", "")
+    if not agent_name:
+        return JSONResponse(status_code=400, content={"error": "agent_name required"})
+    try:
+        identity = load_or_create_identity(agent_name)
+        did = pubkey_to_did(identity["mesh_pubkey"])
+        _cache["time"] = 0  # invalidate cache
+        return {
+            "status": "created",
+            "agent_name": agent_name,
+            "did": did,
+            "mesh_npub": identity.get("mesh_npub", ""),
+            "mesh_pubkey": identity.get("mesh_pubkey", "")[:32]
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.get("/verify_relay")
 async def verify_relay_endpoint(relay_url: str = "", signature: str = "",
                                   timestamp: int = 0, pubkey: str = "",

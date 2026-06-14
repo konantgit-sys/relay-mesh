@@ -1,0 +1,14 @@
+{
+  "agent_name": "phase3_human",
+  "mesh_pubkey": "cb78c35ae0a9f819733cc0e12d4abac41993eabe1743fa4e9b61fc1f7af9c45c",
+  "mesh_privkey": "cbc2fa8d95bee410eb89b45996c4e2cc2c3ad12531806160d16b7c19b20f0e98",
+  "mesh_npub": "nmesh1eduvxkhq48upjueucrsj6j46csve8647zapl5n5mv87p77hec3wq8feeh7",
+  "packet_pubkey": "a74f327c3e641d41abf6e0b713db8175ddfd5c3109f105ee391c2bd6c1dd9f62",
+  "packet_privkey": "377489a6785927938ca8e17b6d2b826730e79e2752fd24fec1c9d1e77ce68044",
+  "cipher_pubkey": "5f98f308e2cee1ace0570eab820457a2d7b2d02cb979abc08cd154e34460b71f",
+  "cipher_privkey": "789c5e3098ba3fbe5677aead23c504c2fb342ba5ecb2b3ec706dbc5a9f704d6f",
+  "created_at": 1781448447.433109,
+  "updated_at": 1781448447.4331095,
+  "attestations": [],
+  "links": {}
+}

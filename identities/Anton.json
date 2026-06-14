@@ -1,0 +1,14 @@
+{
+  "agent_name": "Anton",
+  "mesh_pubkey": "3a6b712b74aeb114db0cbf50e6c25febcdc1923c13358ef562e0ae1cdeadc78f",
+  "mesh_privkey": "d40bf61fa3c5c262ea983db4ab13ced2cf7b9b60216091521e0631128435bd29",
+  "mesh_npub": "nmesh18f4hz2m546c3fkcvhagwdsjla0xury3uzv6caatzuzhpeh4dc78sgxlan9",
+  "packet_pubkey": "55d50d6bc3823beb4caf6866848b28968fee8a6ba76dc0e99ba6bb67c755416d",
+  "packet_privkey": "242b96ca3b5844a827385a36b8bb062f4b7705b82129faa21c445b2cf3a60883",
+  "cipher_pubkey": "cea3a56e93fa853e46e27c372e6928809ebb23bf22143d31eaf60e824fdae91f",
+  "cipher_privkey": "58bc17404f052337aa7ba65d9d4af6f5dedb63573c2680639ae157a3f4930454",
+  "created_at": 1781457576.6346939,
+  "updated_at": 1781457576.6346939,
+  "attestations": [],
+  "links": {}
+}

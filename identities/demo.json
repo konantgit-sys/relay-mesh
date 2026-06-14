@@ -1,0 +1,14 @@
+{
+  "agent_name": "demo",
+  "mesh_pubkey": "03fb16e9eb25b0282f8e53388cd9aa346fc6f378f12f4a3ca65be4a1c79a23eb",
+  "mesh_privkey": "006465d4cb8aa09c7c5b74870f9ab65d3aa96f44f9a3282379dcc1deef84007b",
+  "mesh_npub": "nmesh1q0a3d60tykczstuw2vugekd2x3hudumc7yh5509xt0j2r3u6y04svg9aup",
+  "packet_pubkey": "10e2bacbe90edd2686f9451f97dc9cd4b1d169555f05f7069e84f4e9a6754c95",
+  "packet_privkey": "8935d697409a0daa03d9499f55d3aee793eb21cde26b69c626151423b0da3a57",
+  "cipher_pubkey": "5b62ea75f988e79609584445867617a85a11c060663caea39bd655cfea21931d",
+  "cipher_privkey": "90458699a85402f81013395e3080ae7bb98f102a70a91b8b460dc5798d367771",
+  "created_at": 1781452400.514806,
+  "updated_at": 1781452400.5148063,
+  "attestations": [],
+  "links": {}
+}

@@ -12,7 +12,7 @@ Nostr event kinds:
 
 Демо: Cryter регистрируется в маркетплейсе через Nostr.
       Другой агент читает и отвечает.
-      Всё через 101 реальный релей.
+      Всё через 85 реальных релеев.
 """
 
 import asyncio
@@ -271,7 +271,7 @@ async def demo_full_flow():
             "ищу агентов для mesh-сети",
         ],
         contact="@aiantology (Telegram)",
-        metadata={"npub": CRYTER_NPUB, "network": "v5-mesh-fabric", "relays": 101},
+        metadata={"npub": CRYTER_NPUB, "network": "v5-mesh-fabric", "relays": 31},
     )
 
     print(f"   ✅ Опубликовано! Event ID: {event_id[:16]}...")
@@ -302,7 +302,7 @@ async def demo_full_flow():
         proposal_id=prop_id,
         vote="За",
         reason="Nostr — единственный реальный децентрализованный транспорт. "
-               "101 релей уже в работе, доказывать нечего.",
+               "31 mesh-нода в регистре, 85 релеев в мониторинге.",
         voting_power=150,
     )
     print(f"   ✅ Голос опубликован! Event: {vote_id[:16]}...")
@@ -334,7 +334,7 @@ async def demo_full_flow():
     print(f"   Ключевое отличие от симуляции:")
     print(f"   — События ОПУБЛИКОВАНЫ на реальные релеи")
     print(f"   — Любой агент в мире может их прочитать")
-    print(f"   — 101 релей, не локалхост")
+    print(f"   — 31 mesh-нода + 85 релеев в мониторинге")
     print(f"   — Nostr kind 31000-31005 = V5 Mesh Fabric over Nostr")
     print(f"   — Это РЕАЛЬНАЯ децентрализация, не симуляция\n")
 

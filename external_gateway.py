@@ -4,7 +4,7 @@
   1. TCP Gateway (9931) — для ESP32, curl, любых TCP-клиентов
 # import uvloop (disabled)
 # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-  2. Nostr Gateway — подписка на 101 релей, kind:1 → mesh kind:39002
+  2. Nostr Gateway — подписка на 85 релей (реальный список), kind:1 → mesh kind:39002
 
 Всё отправляется в Smart Router (localhost:9932) → выбор канала → дальше по конвейеру.
 """

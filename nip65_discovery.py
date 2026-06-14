@@ -47,7 +47,7 @@ relay_meta: dict = {
     "burst": "194,388 msg/s",
     "services": 35,
     "alive": 33,
-    "relays_101": 101,
+    "relays_mesh": 31,
     "graceful_degradation": True,
     "anti_ddos": True,
     "payments": True,
@@ -93,7 +93,7 @@ def build_relay_list_event() -> dict:
             "channels": relay_meta.get("channels", []),
             "throughput": relay_meta.get("throughput", ""),
             "burst": relay_meta.get("burst", ""),
-            "relays_101": relay_meta.get("relays_101", 0),
+            "relays_mesh": relay_meta.get("relays_mesh", 0),
         }),
     }
     return event

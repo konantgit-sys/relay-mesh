@@ -1,0 +1,14 @@
+{
+  "agent_name": "testuser",
+  "mesh_pubkey": "6d1f51304046f82f6d81fb07bb297c9c09e1cb385975a4bc225fd16c6bb98226",
+  "mesh_privkey": "c5e0618cd364095d2d18aec9eb330a56f771dcac5ff7976566f8f0c11d3b8174",
+  "mesh_npub": "nmesh1d504zvzqgmuz7mvplvrmk2tunsy7rject966f0pztlgkc6aesgnqz0l07q",
+  "packet_pubkey": "4afb001775431de1ed7c2da588a8556d18d97e19949fe9527616c9abb1dcb604",
+  "packet_privkey": "d971dde2f31ac2bc02e3bd9923cbf35e5368c7e3b27ebfe7a3b7c413c7108df1",
+  "cipher_pubkey": "fbd6309b51e1561c988f87bf55904241d12fd95144ab6d68d94e19245bf41e1b",
+  "cipher_privkey": "289d4a98781808fcc1c2b51e26a151cfc527a9a7ce40c86f8abbc43a7959397b",
+  "created_at": 1781452573.0617635,
+  "updated_at": 1781452573.0617638,
+  "attestations": [],
+  "links": {}
+}
