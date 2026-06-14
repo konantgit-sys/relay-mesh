@@ -33,6 +33,7 @@ import blinded_sigs as sigs
 # ── Config ──
 STATUS_FILE = "/dev/shm/chequebook_status.json"
 CHEQUE_DB_FILE = "/dev/shm/chequebook_db.json"
+_start_time = time.time()
 
 # In-memory DB
 # book_id → cheque_book
@@ -45,6 +46,10 @@ stats = {
     "cheques_total": 0,
     "agents_with_books": 0,
 }
+
+# ═══ Phase 7: Settlement ═══
+settlements: list = []  # [{id, book_id, index, agent, amount, settled_at, solana_tx}]
+unsettled: list = []    # [{book_id, index, agent, amount, timestamp, sig}]
 
 
 def _save_db():
@@ -238,8 +243,26 @@ class ChequeHandler(BaseHTTPRequestHandler):
                 "books": len(books),
                 "agents": len(agent_books),
             })
+        elif path == "/health":
+            self._json({"status": "healthy", "name": "chequebook", "uptime": int(time.time() - _start_time)})
+        elif path == "/status":
+            self._json({
+                "status": "running",
+                "stats": stats,
+                "books": len(books),
+                "agents": len(agent_books),
+            })
         elif path == "/stats":
             self._json(stats)
+        elif path == "/settlement/status":
+            self._json({
+                "unsettled_count": len(unsettled),
+                "settled_count": len(settlements),
+                "unsettled": unsettled[-20:],  # last 20
+                "settlements": settlements[-20:],
+            })
+        elif path == "/settlement/history":
+            self._json({"settlements": settlements, "total": len(settlements)})
         elif path.startswith("/agent/"):
             pk = path.split("/agent/")[1]
             self._json({"books": get_agent_books(pk), "agent": pk})
@@ -269,6 +292,46 @@ class ChequeHandler(BaseHTTPRequestHandler):
                 sig_hex=body.get("sig", ""),
             )
             self._json(result)
+        # ═══ Phase 7: Settlement ═══
+        elif path == "/settle":
+            # Batch settle: [{book_id, index, sig, amount}]
+            items = body.get("items", []) if isinstance(body, dict) else body
+            results = []
+            for item in items:
+                r = spend_cheque(
+                    agent_pubkey=item.get("agent", body.get("agent", "")),
+                    book_id=item.get("book_id", ""),
+                    index=item.get("index", -1),
+                    sig_hex=item.get("sig", ""),
+                )
+                if r.get("accepted"):
+                    # Push to payment queue for Solana verification
+                    try:
+                        queue_entry = {
+                            "type": "settlement",
+                            "book_id": item["book_id"],
+                            "index": item["index"],
+                            "agent": item.get("agent", body.get("agent", "")),
+                            "amount": item.get("amount", 0),
+                            "timestamp": time.time(),
+                        }
+                        with open("/dev/shm/payment_queue.jsonl", "a") as qf:
+                            qf.write(json.dumps(queue_entry) + "\n")
+                        unsettled.append({
+                            "book_id": item["book_id"],
+                            "index": item["index"],
+                            "agent": item.get("agent", body.get("agent", "")),
+                            "amount": item.get("amount", 0),
+                            "timestamp": time.time(),
+                            "sig": item.get("sig", ""),
+                        })
+                        _save_db()
+                        results.append({"cheque_id": f"{item['book_id'][:12]}_{item['index']}", "status": "settling"})
+                    except Exception as e:
+                        results.append({"cheque_id": f"{item['book_id'][:12]}_{item['index']}", "status": "error", "reason": str(e)})
+                else:
+                    results.append({"cheque_id": f"{item.get('book_id','')[:12]}_{item.get('index',-1)}", "status": "rejected", "reason": r.get("reason","")})
+            self._json({"settled": len([x for x in results if x['status']=='settling']), "results": results})
         # ═══ Вектор 4: Payment endpoint (от SR) ═══
         elif path == "/api/v1/payment":
             # Принимаем kind:30000 от Smart Router

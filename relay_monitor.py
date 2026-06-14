@@ -4,7 +4,7 @@ Relay Monitor V2 — проверяет релеи каждые N минут, п
 Версия: V4
 Дата: 2026-05-23
 
-Использует: relay_list.txt (101 релей)
+Использует: relay_list.txt (85 релей)
 Публикует: relay_monitor_status.json (читается supervisor)
 API: GET /api/v1/relays (через hub_api)
 """

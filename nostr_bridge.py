@@ -2,7 +2,7 @@
 """Nostr Bridge — двусторонний Nostr ↔ Mesh мост (Фаза 3: refactored).
 
 Архитектура:
-  Nostr (WebSocket, 101 релей)
+  Nostr (WebSocket, 85 релей из реального списка)
     ↓ kind:1 → kind:39002  (Nostr → Mesh)
     ↑ kind:39002 → kind:1  (Mesh → Nostr)
 

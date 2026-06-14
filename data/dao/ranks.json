@@ -7,5 +7,23 @@
     "proposals_made": 2,
     "votes_cast": 0,
     "updated_at": 1779556145
+  },
+  "phase5_test": {
+    "rank": "Observer",
+    "level": 0,
+    "score": 1,
+    "papers_reviewed": 0,
+    "proposals_made": 0,
+    "votes_cast": 1,
+    "updated_at": 1781450392
+  },
+  "phase5_user": {
+    "rank": "Observer",
+    "level": 0,
+    "score": 5,
+    "papers_reviewed": 0,
+    "proposals_made": 1,
+    "votes_cast": 0,
+    "updated_at": 1781450392
   }
 }

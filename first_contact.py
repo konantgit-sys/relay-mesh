@@ -167,7 +167,7 @@ def compute_network_snapshot(agents: dict, devices: dict, shard_count: int = 5) 
         "direct": {"agents": len(agent_list), "latency": "1-2ms"},
         "gossip": {"agents": len(agent_list), "latency": "20-50ms", "fanout": 3},
         "mesh": {"agents": len(agent_list), "latency": "50-100ms", "dedup": "bloom"},
-        "nostr": {"agents": len(agent_list), "latency": "1-5s", "relays": 101},
+        "nostr": {"agents": len(agent_list), "latency": "1-5s", "relays": 31},
     }
     
     return {
