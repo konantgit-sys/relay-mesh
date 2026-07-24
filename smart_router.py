@@ -223,7 +223,16 @@ class SmartRouter:
         # ═══ Phase: ZeroMQ Transport (FUTURE) — groundwork laid ═══
         self._zmq_router = None
         self._zmq_publisher = None
-        if ZMQ_AVAILABLE:
+        _zmq_enabled = os.environ.get("SNIN_USE_ZMQ", "0") == "1"
+        if ZMQ_AVAILABLE and _zmq_enabled:
+            from zmq_transport import ZmqTransportFactory
+            self._zmq_router = ZmqTransportFactory.create_router_sync()
+            self._zmq_publisher = ZmqTransportFactory.create_publisher_sync()
+            if self._zmq_router:
+                print(f"[Router] ⚡ ZMQ Router activated → :{self._zmq_router.port}")
+            if self._zmq_publisher:
+                print(f"[Router] ⚡ ZMQ Publisher activated → :{self._zmq_publisher.port}")
+        elif ZMQ_AVAILABLE:
             print("[Router] ⚡ ZMQ transport available (set SNIN_USE_ZMQ=1 to activate)")
         self._last_cr_reconnect = 0.0  # rate-limit reconnect
         # ═══ Фаза 1: DHT Kademlia ═══
@@ -1088,6 +1097,21 @@ class SmartRouter:
             elif channel == "hybrid":  # not available
                 result["error"] = "hybrid channel not available"
 
+            elif channel == "zmq" and self._zmq_router:
+                # ═══ Phase 1b: ZeroMQ Transport — ROUTER/DEALER ═══
+                to_agent = message.get("to", "")
+                if not to_agent:
+                    result["error"] = "zmq requires 'to' field"
+                else:
+                    zmq_ok = self._zmq_router.send_sync(to_agent, message)
+                    result["ok"] = zmq_ok
+                    if zmq_ok:
+                        self.stats["zmq_delivered"] = self.stats.get("zmq_delivered", 0) + 1
+                    else:
+                        self.stats["zmq_failed"] = self.stats.get("zmq_failed", 0) + 1
+            elif channel == "zmq":  # not available
+                result["error"] = "zmq channel not activated (set SNIN_USE_ZMQ=1)"
+
             else:
                 result["error"] = f"unknown channel '{channel}'"
 
@@ -1586,7 +1610,7 @@ class SmartRouter:
                         self.stats["congestion_reroute"] += 1
                 elif health["avg_ms"] > 200:
                     self.stats["congestion_slow"] += 1
-        elif channel_pref in ("direct", "mesh", "gossip", "nostr", "content_router", "chequebook", "gossip_data", "nostr_data", "fire-and-forget", "hybrid"):
+        elif channel_pref in ("direct", "mesh", "gossip", "nostr", "content_router", "chequebook", "gossip_data", "nostr_data", "fire-and-forget", "hybrid", "zmq"):
             channel = channel_pref
             # Фаза 2: если явно запрошенный канал зациркуичен — mesh fallback
             if self._cb.is_blocked(channel):

@@ -21,6 +21,7 @@ echo "[mesh] RouteEngine PID=$!"
 
 # 4. SmartRouter :9932 (сердце)
 sleep 1
+export SNIN_USE_ZMQ=1
 nohup python3 smart_router.py >> "$LOG_DIR/smart_router.log" 2>&1 &
 echo "[mesh] SmartRouter PID=$!"
 
