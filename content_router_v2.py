@@ -6,6 +6,7 @@ import asyncio
 # import uvloop (disabled)
 # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 import json, time, os, sys, hashlib, math, socket
+import serialization as ser  # V6: msgpack transport
 from collections import defaultdict, deque
 
 # ─── Bloom Filter (pure Python, zero false negatives, 1% FP rate) ──────────
@@ -698,7 +699,7 @@ class ContentRouterV2:
         self.writer_idx += 1
         w = self.writers[idx]
         try:
-            w.write((json.dumps(event) + "\n").encode())
+            w.write(ser.pack(event) + b"\n")
             await asyncio.wait_for(w.drain(), timeout=0.5)
             self.stats["forwarded"] += 1
             print(f"[CR] ➡️ fwd kind={event.get('kind',0)} id={event.get('id','?')[:16]} to RE")
@@ -733,13 +734,13 @@ class ContentRouterV2:
                     reader.readline(), timeout=30
                 )
                 if not line: break
-                line = line.decode().strip()
+                line = line.rstrip(b'\r\n')
                 if not line: continue
-                await self.process(json.loads(line))
+                await self.process(ser.unpack(line))
             except asyncio.TimeoutError:
                 # 30 сек без данных — закрыть неактивное соединение
                 break
-            except (json.JSONDecodeError, ConnectionResetError, BrokenPipeError) as e:
+            except (ValueError, json.JSONDecodeError, ConnectionResetError, BrokenPipeError) as e:
                 print(f"[CR] 💥 connection error: {type(e).__name__}: {e}")
                 break
             except Exception as e:
