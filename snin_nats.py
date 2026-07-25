@@ -144,6 +144,17 @@ class NatsTransport:
         """
         self._callbacks[channel] = callback
     
+    async def add_subscription(self, subject: str, callback):
+        """Subscribe to an arbitrary NATS subject with a callback.
+        
+        Callback signature: async def callback(message: bytes, reply_subject: Optional[str])
+        """
+        async def handler(msg):
+            await callback(msg.data, msg.reply)
+        sub = await self.nc.subscribe(subject, cb=handler)
+        self._sub_ids.append(sub)
+        return sub
+    
     def _make_handler(self, channel: str):
         """Create an async message handler for a channel."""
         async def handler(msg):
