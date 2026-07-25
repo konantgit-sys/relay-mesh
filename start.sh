@@ -46,3 +46,9 @@ echo "[mesh] ✅ Fabric launched: $(ps aux | grep -E 'content_router_v2|route_en
 # 8. Статус-страница :8085
 nohup python3 /home/agent/data/sites/relay-mesh/mesh_status.py >> "$LOG_DIR/mesh_status.log" 2>&1 &
 echo "[mesh] StatusPage PID=$!"
+
+# ── NATS Server ──
+if ! pgrep -x nats-server > /dev/null; then
+    nohup nats-server -p 4222 -js > /tmp/nats.log 2>&1 &
+    echo "[mesh] NATS server started"
+fi
