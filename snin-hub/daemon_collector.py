@@ -131,7 +131,7 @@ OTHER_DESCRIPTIONS = {
     "dashboard.py": {"name":"📊 Dashboard", "desc":"Дашборд — веб-панель мониторинга метрик"},
     "cryter_v7": {"name":"🤖 Cryter Dash", "desc":"Cryter Dashboard — панель управления Cryter AI"},
     # AI Agents — отдельная категория
-    "cryter_v10": {"name":"🤖 Cryter V10","desc":"Cryter V10 — AI-агент контента (цикл #N, 101 релей, граф знаний)"},
+    "cryter_v10": {"name":"🤖 Cryter V10","desc":"Cryter V10 — AI-агент контента (цикл #N, 25 релеев, граф знаний)"},
     "cryter_pulse": {"name":"💓 Pulse","desc":"Pulse — пульс Cryter, публикация коротких постов EN+RU каждые 12-49 мин"},
     "nostr_auto_reply": {"name":"💬 Nostr Auto Reply","desc":"Auto Reply — авто-ответы на комментарии в Nostr (87/87)"},
     "daemon_v3": {"name":"🧠 Creator Agent","desc":"Creator — мозг сети SNIN, публикует мысли в @octopus_valet каждые 30 мин"},
