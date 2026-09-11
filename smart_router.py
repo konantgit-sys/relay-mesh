@@ -40,6 +40,7 @@ except ImportError:
 
 import asyncio
 import orjson as json
+import serialization as ser  # V6: msgpack transport layer
 import time
 import os
 import sys
@@ -52,10 +53,27 @@ from gossip_stream import GossipStream
 from graceful_degradation import GracefulDegradation
 from rate_limiter import RateLimiter
 from message_sequencer import SeqNumTracker, ReorderBuffer, reorder_timeout_loop, reorder_cleanup_loop
+from ack_tracker import get_ack_tracker, build_ack_event, ACK_KIND
 from message_deduplicator import MessageDeduplicator, dedup_cleanup_loop
 from priority_queue import PriorityQueue
 from agent_registry import AgentRegistry
 from marketplace_registry import MarketplaceRegistry
+
+# Phase: Hybrid Architecture — Discovery Coordinator + P2P Channel
+try:
+    from hybrid.hybrid_channel import HybridRouterAdapter
+    HYBRID_AVAILABLE = True
+except ImportError:
+    HYBRID_AVAILABLE = False
+    print("[Router] ⚠️ Hybrid channel not available (install: hybrid/)")
+
+# Phase: ZeroMQ Transport — high-performance channel (FUTURE, groundwork laid)
+try:
+    from zmq_transport import ZmqTransportFactory
+    ZMQ_AVAILABLE = True
+except ImportError:
+    ZMQ_AVAILABLE = False
+    # Не печатаем warning — ZMQ опционален, TCP JSON-line по умолчанию
 
 # Level 2: CPU-bound crypto в ProcessPool
 sys.path.insert(0, "/home/agent/data/sites/relay-mesh")
@@ -162,6 +180,8 @@ class SmartRouter:
             "gossip": {"ok": 0, "fail": 0, "avg_ms": 0},
             "nostr": {"ok": 0, "fail": 0, "avg_ms": 0},
             "direct": {"ok": 0, "fail": 0, "avg_ms": 0},
+            "hybrid": {"ok": 0, "fail": 0, "avg_ms": 0},
+            "zmq": {"ok": 0, "fail": 0, "avg_ms": 0},     # FUTURE
             "fire-and-forget": {"ok": 0, "fail": 0, "avg_ms": 0},
         }
         # ═══ Фаза 2: Circuit Breaker + Backpressure ═══
@@ -192,6 +212,28 @@ class SmartRouter:
         self._cb_recovery_count: dict[str, int] = {}  # channel → успешных drain подряд
         self._cb_recovery_threshold = 5                # после скольких снять блокировку
         self._cr_v2_writer = None  # Content Router v2 (:9920)
+        # ═══ Phase: Hybrid Architecture — Discovery Coordinator channel ═══
+        self._hybrid_channel: HybridRouterAdapter | None = None
+        if HYBRID_AVAILABLE:
+            from os import environ
+            hcoor_host = environ.get("HCOOR_HOST", "127.0.0.1")
+            hcoor_port = int(environ.get("HCOOR_PORT", "9970"))
+            self._hybrid_channel = HybridRouterAdapter(hcoor_host, hcoor_port)
+            print(f"[Router] 🧬 Hybrid channel ready → {hcoor_host}:{hcoor_port}")
+        # ═══ Phase: ZeroMQ Transport (FUTURE) — groundwork laid ═══
+        self._zmq_router = None
+        self._zmq_publisher = None
+        _zmq_enabled = os.environ.get("SNIN_USE_ZMQ", "0") == "1"
+        if ZMQ_AVAILABLE and _zmq_enabled:
+            from zmq_transport import ZmqTransportFactory
+            self._zmq_router = ZmqTransportFactory.create_router_sync()
+            self._zmq_publisher = ZmqTransportFactory.create_publisher_sync()
+            if self._zmq_router:
+                print(f"[Router] ⚡ ZMQ Router activated → :{self._zmq_router.port}")
+            if self._zmq_publisher:
+                print(f"[Router] ⚡ ZMQ Publisher activated → :{self._zmq_publisher.port}")
+        elif ZMQ_AVAILABLE:
+            print("[Router] ⚡ ZMQ transport available (set SNIN_USE_ZMQ=1 to activate)")
         self._last_cr_reconnect = 0.0  # rate-limit reconnect
         # ═══ Фаза 1: DHT Kademlia ═══
         self._dht = None
@@ -200,6 +242,9 @@ class SmartRouter:
         self._l5t_heartbeat_task: asyncio.Task = None  # type: ignore
         if self.l5t:
             print("[Router] 📮 L5T Dead-Letter middleware initialized")
+        # ═══ Phase 2: End-to-End ACK Tracker ═══
+        self.ack_tracker = get_ack_tracker()
+        print(f"[Router] ✅ ACK Tracker initialized (kind:{ACK_KIND})")
         # ═══ Фаза 8: Event subscribers (push-канал для агентов) ═══
         self._event_subscribers: dict[int, tuple] = {}  # id → (writer, agent_name)
         self._sub_next_id = 0
@@ -548,7 +593,8 @@ class SmartRouter:
         alive_nostr = len([w for w in self._nostr_writers if w is not None])
         print(f"[Router]    Channels: mesh {'✓' if self._cr_writer else '✗'} "
               f"nostr({alive_nostr}/5) "
-              f"gossip({len(self._gossip_writers)}/5) direct ✓")
+              f"gossip({len(self._gossip_writers)}/5) direct ✓"
+              f" hybrid {'✓' if self._hybrid_channel and self._hybrid_channel._channel._registered else '✗'}")
     
     async def _reconnect_nostr_shard(self, shard_idx: int):
         """Переподключение к nostr шарду. Замещает элемент на месте, не добавляет дубль."""
@@ -634,7 +680,7 @@ class SmartRouter:
         self._pending_mesh_queue.clear()
         
         if self._cr_writer:
-            payload = b"".join(json.dumps(m) + b"\n" for m in to_send)
+            payload = b"".join(ser.pack(m) + b"\n" for m in to_send)
             try:
                 self._cr_writer.write(payload)
                 await asyncio.wait_for(self._cr_writer.drain(), timeout=5)
@@ -662,7 +708,7 @@ class SmartRouter:
             connected = 0
             for pk_hex, raw in all_agents.items():
                 try:
-                    agent = json.loads(raw)
+                    agent = ser.unpack(raw)
                 except:
                     continue
 
@@ -712,7 +758,7 @@ class SmartRouter:
         try:
             if channel == "mesh" and self._cr_writer:
                 # Фаза 6.7: Batch drain — буферизируем, drain каждые 10ms
-                self._mesh_buf.extend(json.dumps(message) + b"\n")
+                self._mesh_buf.extend(ser.pack(message) + b"\n")
                 # ═══ Сообщение буферизировано — считаем успехом, даже если drain не сейчас ═══
                 # Если не поставить ok=True, fail_rate всегда = 100% (сообщения сыпятся быстрее 10ms)
                 result["ok"] = True
@@ -733,7 +779,7 @@ class SmartRouter:
                             self._cb_recovery_count["mesh"] = 0
                     except (ConnectionResetError, BrokenPipeError, OSError, asyncio.TimeoutError) as _eb:
                         # Не чистим буфер — сохраняем сообщение в pending queue
-                        pending_msg = json.loads(self._mesh_buf.decode())
+                        pending_msg = ser.unpack(self._mesh_buf)
                         self._mesh_buf.clear()
                         self._cr_writer = None
                         self.stats["mesh_error"] += 1
@@ -857,7 +903,7 @@ class SmartRouter:
                     print(f"[Router] 🔴 nostr send FAILED: {alive_count} alive, {len(dead_shards)} new dead")
 
             elif channel == "content_router" and self._cr_v2_writer:
-                payload = json.dumps(message) + b"\n"
+                payload = ser.pack(message) + b"\n"
                 try:
                     self._cr_v2_writer.write(payload)
                     await asyncio.wait_for(self._cr_v2_writer.drain(), timeout=3)
@@ -887,7 +933,7 @@ class SmartRouter:
                     except ImportError:
                         # fallback: direct HTTP
                         import urllib.request
-                        payload = json.dumps(message)  # orjson returns bytes
+                        payload = ser.pack(message)  # orjson returns bytes, msgpack returns bytes
                         req = urllib.request.Request(
                             "http://127.0.0.1:9916/api/v1/payment",
                             data=payload,
@@ -910,7 +956,7 @@ class SmartRouter:
 
                 # Фаза 3: Consistent Hashing — выбираем шард по pubkey если есть
                 target_pubkey = message.get("to") or message.get("pubkey", "")
-                gossip_payload = json.dumps(gossip_msg) + b"\n"
+                gossip_payload = ser.pack(gossip_msg) + b"\n"
                 if target_pubkey and len(target_pubkey) > 8:
                     # Directed: шлём в 1 шард (по хешу pubkey)
                     shard_idx = gossip_shard_for(target_pubkey)
@@ -960,7 +1006,7 @@ class SmartRouter:
                     gossip_msg["meta"] = {}
                 if isinstance(gossip_msg["meta"], dict):
                     gossip_msg["meta"] = {**gossip_msg["meta"], "origin": "smart_router", "channel": "fire-and-forget"}
-                gossip_payload = json.dumps(gossip_msg) + b"\n"
+                gossip_payload = ser.pack(gossip_msg) + b"\n"
                 
                 ok_count = 0
                 for idx, w in enumerate(self._gossip_writers):
@@ -988,7 +1034,7 @@ class SmartRouter:
                     payload = message.get("payload", message.get("content", {}))
                     if isinstance(payload, str):
                         try:
-                            payload = json.loads(payload)
+                            payload = ser.unpack(payload)
                         except:
                             payload = {"text": payload}
                     bcast = await self._gossip_stream.broadcast(payload)
@@ -1019,7 +1065,7 @@ class SmartRouter:
                             r2, w2 = await asyncio.wait_for(
                                 asyncio.open_connection(ip, int(port)), timeout=2
                             )
-                            w2.write(json.dumps(message) + b"\n")
+                            w2.write(ser.pack(message) + b"\n")
                             await w2.drain()
                             w2.close()
                             result["ok"] = True
@@ -1029,6 +1075,43 @@ class SmartRouter:
                         result["error"] = "agent not in DHT"
                 else:
                     result["error"] = "no DHT"
+            elif channel == "hybrid" and self._hybrid_channel:
+                # ═══ Phase: Hybrid Architecture — discovery + P2P ═══
+                to_agent = message.get("to", "")
+                payload = message.get("payload", message.get("content", ""))
+                if isinstance(payload, dict):
+                    payload = ser.pack(payload)
+                kind = message.get("kind", 39002)
+                hresult = await self._hybrid_channel.send(
+                    target=to_agent, payload=payload, kind=kind,
+                    meta={"source": "smart_router", "channel": "hybrid"},
+                )
+                result["ok"] = hresult.get("ok", False)
+                result["latency_ms"] = hresult.get("latency_ms", 0)
+                if not result["ok"]:
+                    result["error"] = hresult.get("error", "hybrid_failed")
+                if result["ok"]:
+                    self.stats["hybrid_delivered"] = self.stats.get("hybrid_delivered", 0) + 1
+                else:
+                    self.stats["hybrid_failed"] = self.stats.get("hybrid_failed", 0) + 1
+            elif channel == "hybrid":  # not available
+                result["error"] = "hybrid channel not available"
+
+            elif channel == "zmq" and self._zmq_router:
+                # ═══ Phase 1b: ZeroMQ Transport — ROUTER/DEALER ═══
+                to_agent = message.get("to", "")
+                if not to_agent:
+                    result["error"] = "zmq requires 'to' field"
+                else:
+                    zmq_ok = self._zmq_router.send_sync(to_agent, message)
+                    result["ok"] = zmq_ok
+                    if zmq_ok:
+                        self.stats["zmq_delivered"] = self.stats.get("zmq_delivered", 0) + 1
+                    else:
+                        self.stats["zmq_failed"] = self.stats.get("zmq_failed", 0) + 1
+            elif channel == "zmq":  # not available
+                result["error"] = "zmq channel not activated (set SNIN_USE_ZMQ=1)"
+
             else:
                 result["error"] = f"unknown channel '{channel}'"
 
@@ -1325,6 +1408,47 @@ class SmartRouter:
         if kind == HEARTBEAT_KIND and from_id and from_id != "?":
             self.graph.update_node_status(from_id, "online", now)
 
+    async def handle_ack(self, ack_event: dict) -> dict:
+        """Обработать входящий ACK (kind:8014)."""
+        result = self.ack_tracker.receive_ack(ack_event)
+        if result:
+            self.stats["acks_received"] += 1
+            ch = result.get("channel", "?")
+            if ch not in self.stats:
+                self.stats[f"ack_chan:{ch}"] = 0
+            self.stats[f"ack_chan:{ch}"] += 1
+            
+            from_name = result.get("from", "?")[:12]
+            to_name = result.get("to", "?")[:12]
+            lat = result.get("latency_ms", 0)
+            print(f"[Router] ✅ ACK received: {from_name}→{to_name} "
+                  f"via {ch} latency={lat:.0f}ms")
+        return {"ok": True, "ack_processed": result is not None, "result": result}
+
+    async def ack_retry_loop(self):
+        """Фоновый цикл: переотправка сообщений без ACK."""
+        print("[Router] 🔄 ACK retry loop started")
+        while True:
+            await asyncio.sleep(5)  # проверка каждые 5 сек
+            pending = self.ack_tracker.get_pending_retries()
+            for p in pending:
+                new_channel = p.next_retry_channel
+                if self._cb.is_blocked(new_channel):
+                    alt = [c for c in ["mesh", "gossip", "nostr", "direct"] if not self._cb.is_blocked(c)]
+                    new_channel = alt[0] if alt else "mesh"
+                retry_msg = {
+                    "from": p.from_agent,
+                    "to": p.to_agent,
+                    "kind": 39002,
+                    "content": f"RETRY:{p.msg_id}",
+                    "meta": {"channel": new_channel, "retry_of": p.msg_id, "retry_num": p.retries + 1},
+                }
+                result = await self.send_via_channel(new_channel, retry_msg)
+                self.ack_tracker.mark_retry(p.msg_id, new_channel)
+                self.stats["ack_retries"] += 1
+                print(f"[Router] 🔄 ACK retry #{p.retries}: {p.msg_id[:8]} via {new_channel}")
+            await asyncio.sleep(0)
+
     def _route_via_graph(self, target_id: str, msg: dict) -> dict | None:
         """Phase 4: попытаться найти маршрут до target через Knowledge Graph.
 
@@ -1486,7 +1610,7 @@ class SmartRouter:
                         self.stats["congestion_reroute"] += 1
                 elif health["avg_ms"] > 200:
                     self.stats["congestion_slow"] += 1
-        elif channel_pref in ("direct", "mesh", "gossip", "nostr", "content_router", "chequebook", "gossip_data", "nostr_data", "fire-and-forget"):
+        elif channel_pref in ("direct", "mesh", "gossip", "nostr", "content_router", "chequebook", "gossip_data", "nostr_data", "fire-and-forget", "hybrid", "zmq"):
             channel = channel_pref
             # Фаза 2: если явно запрошенный канал зациркуичен — mesh fallback
             if self._cb.is_blocked(channel):
@@ -1606,7 +1730,7 @@ class SmartRouter:
         if self._cr_v2_writer:
             print(f"[Router] 🔁 CR multicast for kind={msg.get('kind',0)} from={msg.get('from','?')[:12]}")
             try:
-                cr_payload = json.dumps(msg) + b"\n"  # orjson returns bytes, no .encode()
+                cr_payload = ser.pack(msg) + b"\n"  # msgpack for mesh transport
                 self._cr_v2_writer.write(cr_payload)
                 await asyncio.wait_for(self._cr_v2_writer.drain(), timeout=1)
                 self.stats["cr_v2_multicast"] += 1
@@ -1675,6 +1799,24 @@ class SmartRouter:
                 "fallback": graph_route.get("fallback", False),
             }
 
+        # ═══ Phase 2: ACK Tracking — register for agent-to-agent messages ═══
+        to_agent_full = msg.get("to", "")
+        from_agent_full = msg.get("from", msg.get("pubkey", ""))
+        if best_result.get("ok") and to_agent_full and to_agent_full != "broadcast" and to_agent_full != "?":
+            event_id = best_result.get("event_id", "")
+            if not event_id:
+                import hashlib, time as _time, os as _os
+                content_val = msg.get("content", "")
+                kind_val = msg.get("kind", 39002)
+                raw = f"{from_agent_full}:{content_val}:{kind_val}:{_time.time()}:{_os.urandom(4).hex()}"
+                event_id = hashlib.sha256(raw.encode()).hexdigest()[:16]
+            msg_id = self.ack_tracker.make_msg_id(from_agent_full, msg.get("content", ""), msg.get("kind", 39002))
+            self.ack_tracker.register_send(msg_id, from_agent_full, to_agent_full, best_result.get("channel", "mesh"), event_id)
+            best_result["msg_id"] = msg_id
+            best_result["ack_registered"] = True
+            self.stats["acks_registered"] += 1
+            best_result["ack_registered"] = True
+            self.stats["acks_registered"] += 1
         return best_result
 
     async def handle_client(self, reader, writer):
@@ -1690,7 +1832,7 @@ class SmartRouter:
             try:
                 bp = {"retry_after": BP_RETRY_AFTER_SEC, "error": "backpressure",
                       "concurrent": self._concurrent, "max": BP_MAX_CONCURRENT}
-                writer.write(json.dumps(bp) + b"\n")
+                writer.write(ser.pack(bp) + b"\n")
                 await writer.drain()
             except Exception:
                 pass
@@ -1706,13 +1848,13 @@ class SmartRouter:
                 line = await asyncio.wait_for(reader.readline(), timeout=30)
                 if not line:
                     break
-                line = line.decode().strip()
+                line = line.rstrip(b'\r\n')
                 if not line:
                     continue
                 try:
-                    msg = json.loads(line)
-                except json.JSONDecodeError:
-                    self.stats["bad_json"] += 1
+                    msg = ser.unpack(line)
+                except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as e:
+                    self.stats["bad_msg"] = self.stats.get("bad_msg", 0) + 1
                     continue
 
                 # ═══ Фаза 0: verify_sig (optional, 0.05ms) ═══
@@ -1777,7 +1919,7 @@ class SmartRouter:
                                         "payload": payload,
                                         "dlq_hash": dlq_msg.hash,
                                     }
-                                    data = json.dumps(push_event) + b"\n"
+                                    data = ser.pack(push_event) + b"\n"
                                     writer.write(data)
                                 await writer.drain()
                                 print(f"[Router] 📬 Flushed {len(pending)} DLQ messages to {agent_name[:16]}...")
@@ -1798,6 +1940,12 @@ class SmartRouter:
                     continue
                 
                 # ═══ Фаза 6: Agent Capability Registry ═══
+                elif kind == ACK_KIND:
+                    await self.handle_ack(msg)
+                    writer.write(json.dumps({"ok": True, "channel": "ack"}) + b"\n")
+                    await writer.drain()
+                    continue
+
                 elif kind == "register_capability":
                     agent_id = msg.get("from", "")
                     capabilities = msg.get("capabilities", [])
@@ -2206,8 +2354,28 @@ class SmartRouter:
             )
             await self._dht.start()
             print(f"[Router] ✅ DHT node ready (agents={len(await self._dht.list_agents())})")
+
         except Exception as e:
             print(f"[Router] ⚠️ DHT init error: {e}")
+
+        # ═══ Phase: Hybrid Architecture — register with Discovery Coordinator ═══
+        if self._hybrid_channel:
+            try:
+                await self._hybrid_channel.start(
+                    agent_pubkey="smart_router",
+                    agent_name="SmartRouter",
+                    agent_ip="127.0.0.1",
+                    agent_port=LISTEN_PORT,
+                    nat_type="easy",
+                )
+                print(f"[Router] 🧬 Hybrid channel registered with coordinator")
+            except Exception as e:
+                print(f"[Router] ⚠️ Hybrid channel registration failed (coordinator down?): {e}")
+
+        # ═══ Phase 2: ACK Retry Loop ═══
+        asyncio.create_task(self.ack_retry_loop())
+        self.ack_tracker.start()
+        print(f"[Router] ✅ ACK retry loop started")
 
         n_gossip = len(self._gossip_writers)
         server = await asyncio.start_server(self.handle_client, LISTEN_HOST, LISTEN_PORT)
@@ -2219,6 +2387,7 @@ class SmartRouter:
         print(f"[Router]    Policies: {n_policies} rules in Redis")
         print(f"[Router]    Route-learning: ON")
         print(f"[Router]    Phase 4: orjson + Health :{HEALTH_PORT}")
+        print(f"[Router]    Phase: Hybrid Architecture {'🧬' if self._hybrid_channel and self._hybrid_channel._channel._registered else '✗'}")
         print(f"[Router]    Phase 3: Message Ordering ENABLED (seq_num + reorder)")
         print(f"[Router]    Phase 4: Message Deduplication ENABLED")
         print(f"[Router]    Phase 5: Priority Queue ENABLED ({self._pq_workers} workers, aging)")

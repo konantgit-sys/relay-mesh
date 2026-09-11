@@ -33,7 +33,7 @@
 | Route Engine | 9910 | 🟢 | Классификация kind, batch |
 | Content Router V2 | 9920 | 🟢 | Bloom+Redis dedup, URL priority |
 | Nostr Bridge ×5 | 9941-9945 | 🟢🟢🟢🟢🟢 | Шлюзы Nostr (замена gossip :9100-9104) |
-| External Gateway | 9931 | 🟢 | TCP + Nostr bridge (101 relay) |
+| External Gateway | 9931 | 🟢 | TCP + Nostr bridge (25 relay) |
 | Identity API v2 | 9940 | 🟢 | Регистрация агентов |
 | Cross-Mesh Bridge | 9945 | 🟢 | Federation между mesh сетями |
 | Cheque Book | 9916 | 🟢 | Чековые книги (15 книг, 8 агентов) |

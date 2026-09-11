@@ -16,15 +16,15 @@ async def publish_loop(self):
         queue = self._publish_queue[:]   # забираем накопленное
         self._publish_queue = []
         for event in queue:
-            for client in self.clients:  # во все 101 релеи
+            for client in self.clients:  # во все 25 релеев
                 await client.publish(event)
 ```
 
 **Последствия:**
 - Сообщение от агента А → Nostr → агенту Б идёт 0-30 секунд
-- Всплеск нагрузки на CPU раз в 30 секунд (батч из N событий × 101 WS send)
+- Всплеск нагрузки на CPU раз в 30 секунд (батч из N событий × 25 WS send)
 - При падении процесса — теряется весь непрочитанный батч в `_publish_queue`
-- 101 WebSocket соединение открыты, но не используются для немедленной отправки
+- 25 WebSocket соединение открыты, но не используются для немедленной отправки
 
 ---
 
@@ -37,7 +37,7 @@ class NostrBridge:
     def __init__(self):
         self._publish_queue = asyncio.Queue()  # вместо list
         self._publisher_task = None
-        self.clients = []  # 101 NostrRelayClient, WS уже открыты
+        self.clients = []  # 25 NostrRelayClient, WS уже открыты
     
     async def publish_event(self, event: dict):
         """Положить событие в очередь — публикация произойдёт немедленно."""
@@ -143,9 +143,9 @@ SR сам вызывает `bridge.publish_event()` через asyncio (если
 | Задержка доставки | 0-30000ms | ~50-200ms | **×150 быстрее** |
 | Потеря при краше | Весь батч | 1 событие | **×N надёжнее** |
 | CPU профиль | Пик раз/30с | Равномерно | **Без просадок** |
-| Нагрузка на 101 релей | N событий × 101 | 1 × 101 | **Та же** |
+| Нагрузка на 25 релеев | N событий × 25 | 1 × 25 | **Та же** |
 
-**Побочный эффект:** NostrBridge начинает работать как relay — событие пришло, сразу ушло в 101 релей. Mesh становится ближе к real-time Nostr.
+**Побочный эффект:** NostrBridge начинает работать как relay — событие пришло, сразу ушло в 25 релеев. Mesh становится ближе к real-time Nostr.
 
 ---
 
@@ -169,4 +169,4 @@ SR сам вызывает `bridge.publish_event()` через asyncio (если
 |------|------------|
 | WebSocket не успевает отправлять | `asyncio.Queue(maxsize=1000)` — превышение = лог + drop oldest |
 | Rate limit от Nostr релея | CB на каждый client (уже есть в SR) |
-| Перегрузка при батче из SR | Queue + parallel gather — 101 WS send = ~100ms |
+| Перегрузка при батче из SR | Queue + parallel gather — 25 WS send = ~100ms |

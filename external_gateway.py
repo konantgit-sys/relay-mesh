@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+import serialization as ser  # V6: msgpack transport
 import os
 import sys
 import time
@@ -159,7 +160,7 @@ class TCPGateway:
             self.stats["sr_errors"] += 1
             return False
         try:
-            line = json.dumps(event) + "\n"
+            line = ser.pack(event) + b"\n"
             self.sr_writer.write(line.encode())
             await self.sr_writer.drain()
             self.stats["sent_to_sr"] += 1
@@ -184,15 +185,15 @@ class TCPGateway:
                 line = await reader.readline()
                 if not line:
                     break
-                line = line.decode().strip()
+                line = line.rstrip(b'\r\n')
                 if not line:
                     continue
 
-                # Парсинг JSON
+                # Auto-detect JSON or msgpack
                 try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    self.stats["bad_json"] += 1
+                    data = ser.unpack(line)
+                except (json.JSONDecodeError, ValueError):
+                    self.stats["bad_msg"] = self.stats.get("bad_msg", 0) + 1
                     continue
 
                 # Nostr протокол: данные могут быть списком ["EVENT", {...}]
@@ -220,7 +221,7 @@ class TCPGateway:
 
                 # Нормализация kind:1 (Nostr текст) → kind:39002 (mesh content)
                 if kind == 1:
-                    mesh_content = json.dumps({
+                    mesh_content = ser.pack({
                         "from": f"ext_{pubkey[:8]}",
                         "seq": self.stats["kind1_received"],
                         "payload": {
@@ -368,7 +369,7 @@ class NostrGateway:
 
                         if kind == 1:
                             short = content[:500]
-                            mesh_content = json.dumps({
+                            mesh_content = ser.pack({
                                 "from": f"nostr_{pubkey[:8]}",
                                 "seq": self.stats["nostr_events"],
                                 "payload": {
@@ -387,7 +388,7 @@ class NostrGateway:
 
                         elif kind == 7:
                             short = content[:200]
-                            mesh_content = json.dumps({
+                            mesh_content = ser.pack({
                                 "from": f"nostr_{pubkey[:8]}",
                                 "seq": self.stats["nostr_events"],
                                 "payload": {

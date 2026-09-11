@@ -1,235 +1,165 @@
 #!/usr/bin/env python3
 """
-SNIN Pulse Sync Module v2.4
+SNIN Pulse Sync v2.4 — запущен 2026-06-27
 
-Фаза 2.4: NTP-синхронизация + Heartbeat между сервисами
+Простой heartbeat: каждые 5 секунд TCP-коннектится ко всем mesh-сервисам.
+Фиксирует: latency, alive/dead, время последнего ответа.
+Записывает /home/agent/data/sites/relay-mesh/pulse_status.json для хаба.
 
-Логика:
-  - Heartbeat сервер (:9930) отправляет pulse каждые 5 сек
-  - Все сервисы синхронизируют время через NTP
-  - Детектирует несинхронизированные узлы (clock skew >1 сек)
-  - Используется для distributed tracing, load balancing, consensus
-
-Pulse формат: {ts, ntp_offset, healthy_nodes: []}
+Без ntplib, без aiohttp — только raw socket.
 """
 
-import asyncio
-import json
-import logging
-import ntplib
-import os
-import socket
-import time
+import asyncio, json, os, socket, time
 from datetime import datetime
-from typing import Dict, List, Optional
 
-LOG_DIR = "/home/agent/data/logs"
-os.makedirs(LOG_DIR, exist_ok=True)
+STATUS_FILE = "/home/agent/data/sites/relay-mesh/pulse_status.json"
+LOG_FILE = "/home/agent/data/logs/pulse_sync.log"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [PULSE] %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, "pulse_sync.log")),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("PulseSync")
+# Конфиг узлов: имя → порт
+NODES = {
+    "smart_router":    9932,
+    "route_engine":    9910,
+    "content_router":  9920,
+    "nostr_bridge_0":  9941,
+    "nostr_bridge_1":  9942,
+    "nostr_bridge_2":  9943,
+    "nostr_bridge_3":  9944,
+    "nostr_bridge_4":  9945,
+    "external_gateway": 9931,
+    "identity_api":    9940,
+    "relay_server":    8198,
+    "snin_adapter":    8199,
+}
 
-PULSE_STATUS_FILE = "/home/agent/data/sites/relay-mesh/pulse_status.json"
-NTP_SERVERS = ["pool.ntp.org", "time.nist.gov", "time.google.com"]
-
-class PulseNode:
-    """Один узел в сети, отправляющий pulse"""
-    def __init__(self, name: str, port: int):
-        self.name = name
-        self.port = port
-        self.last_heartbeat = None
-        self.ntp_offset = 0.0  # Разница между local time и NTP time
-        self.is_healthy = True
-        self.latency_ms = 0.0
-
-    def to_dict(self):
-        return {
-            "name": self.name,
-            "port": self.port,
-            "is_healthy": self.is_healthy,
-            "ntp_offset": round(self.ntp_offset, 3),
-            "latency_ms": round(self.latency_ms, 2),
-            "last_heartbeat": self.last_heartbeat
-        }
-
-class PulseSyncManager:
+class PulseSync:
     def __init__(self):
-        self.nodes: Dict[str, PulseNode] = {}
-        self.local_ntp_offset = 0.0
-        self.pulse_sequence = 0
-        self.setup_nodes()
-
-    def setup_nodes(self):
-        """Инициализирует узлы"""
-        nodes_config = [
-            ("smart_router", 9932),
-            ("route_engine", 9910),
-            ("content_router", 9920),
-            ("nostr_bridge_0", 9941),
-            ("nostr_bridge_1", 9942),
-            ("nostr_bridge_2", 9943),
-            ("nostr_bridge_3", 9944),
-            ("external_gateway", 9931),
-            ("identity_api", 9940),
-        ]
-        for name, port in nodes_config:
-            self.nodes[name] = PulseNode(name, port)
-
-    def sync_ntp(self) -> float:
-        """Синхронизируется с NTP, возвращает offset в секундах"""
-        for server in NTP_SERVERS:
-            try:
-                client = ntplib.NTPClient()
-                response = client.request(server, version=3, timeout=2)
-                offset = response.offset
-                logger.info(f"✓ NTP sync: {server} → offset {offset:.3f}s")
-                return offset
-            except Exception as e:
-                logger.warning(f"✗ NTP {server} failed: {e}")
-                continue
-
-        logger.error("Could not sync with any NTP server")
-        return 0.0
-
-    async def broadcast_heartbeat(self):
-        """Отправляет heartbeat (pulse) всем узлам"""
-        self.pulse_sequence += 1
-        now = time.time()
-
-        pulse_data = {
-            "sequence": self.pulse_sequence,
-            "timestamp": now,
-            "ntp_offset": self.local_ntp_offset,
-            "healthy_nodes": self.get_healthy_nodes(),
+        self.seq = 0
+        self.nodes = {
+            name: {"port": port, "alive": False, "latency_ms": 0, "last_seen": None, "dead_since": None}
+            for name, port in NODES.items()
         }
+        self.start_time = time.time()
 
-        # Отправляем heartbeat всем узлам параллельно
-        tasks = []
-        for name, node in self.nodes.items():
-            task = self._send_heartbeat_to_node(node, pulse_data)
-            tasks.append(task)
+    def log(self, msg):
+        ts = datetime.now().strftime("%H:%M:%S")
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{ts} {msg}\n")
 
-        await asyncio.gather(*tasks)
-        logger.info(f"📡 Pulse #{self.pulse_sequence} broadcasted")
-
-    async def _send_heartbeat_to_node(self, node: PulseNode, pulse: Dict):
-        """Отправляет heartbeat одному узлу"""
-        start = time.time()
-        url = f"http://127.0.0.1:{node.port}/api/pulse"
-
+    async def check_node(self, name: str, port: int) -> tuple[bool, float]:
+        """TCP connect → возвращает (alive, latency_ms)"""
         try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=pulse, timeout=aiohttp.ClientTimeout(total=1)) as resp:
-                    elapsed = (time.time() - start) * 1000
-                    node.latency_ms = elapsed
+            start = time.monotonic()
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", port),
+                timeout=1.5
+            )
+            latency = (time.monotonic() - start) * 1000
+            writer.close()
+            await writer.wait_closed()
+            return True, round(latency, 2)
+        except:
+            return False, 0
 
-                    if resp.status == 200:
-                        node.is_healthy = True
-                        node.last_heartbeat = datetime.utcnow().isoformat()
-                    else:
-                        node.is_healthy = False
-                        logger.warning(f"Pulse to {node.name} returned HTTP {resp.status}")
-        except asyncio.TimeoutError:
-            node.is_healthy = False
-            logger.warning(f"Pulse to {node.name} timeout")
-        except Exception as e:
-            node.is_healthy = False
-            logger.warning(f"Pulse to {node.name} failed: {e}")
+    async def pulse_cycle(self):
+        """Один цикл: проверить всех → записать статус"""
+        self.seq += 1
+        now = datetime.utcnow().isoformat()
 
-    def get_healthy_nodes(self) -> List[str]:
-        """Список живых узлов"""
-        return [name for name, node in self.nodes.items() if node.is_healthy]
+        checks = []
+        for name, info in self.nodes.items():
+            checks.append(self.check_node(name, info["port"]))
 
-    def detect_clock_skew(self) -> Dict[str, float]:
-        """Детектирует узлы с большой разницей в часах"""
-        skewed = {}
-        for name, node in self.nodes.items():
-            if abs(node.ntp_offset) > 1.0:  # Больше 1 секунды — проблема
-                skewed[name] = node.ntp_offset
-                logger.warning(f"⏰ {name} clock skew: {node.ntp_offset:.3f}s")
-        return skewed
+        results = await asyncio.gather(*checks)
 
-    def get_status(self):
-        """Возвращает статус пульса"""
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "pulse_sequence": self.pulse_sequence,
-            "local_ntp_offset": round(self.local_ntp_offset, 3),
-            "healthy_nodes": self.get_healthy_nodes(),
-            "clock_skew": self.detect_clock_skew(),
-            "nodes": {name: node.to_dict() for name, node in self.nodes.items()},
+        alive_count = 0
+        dead_count = 0
+        for (name, info), (alive, latency) in zip(self.nodes.items(), results):
+            was_alive = info["alive"]
+            info["alive"] = alive
+            info["latency_ms"] = latency
+            if alive:
+                alive_count += 1
+                info["last_seen"] = now
+                info["dead_since"] = None
+                if not was_alive:
+                    self.log(f"RECOVERED {name} :{info['port']}")
+            else:
+                dead_count += 1
+                if was_alive:
+                    info["dead_since"] = now
+                    self.log(f"⚠ DEAD {name} :{info['port']}")
+                elif info.get("dead_since") is None:
+                    info["dead_since"] = now
+
+        # Запись статуса
+        status = {
+            "timestamp": now,
+            "sequence": self.seq,
+            "uptime_seconds": int(time.time() - self.start_time),
+            "alive": alive_count,
+            "dead": dead_count,
+            "total": len(self.nodes),
+            "nodes": {
+                name: {
+                    "port": info["port"],
+                    "alive": info["alive"],
+                    "latency_ms": info["latency_ms"],
+                    "last_seen": info["last_seen"],
+                    "dead_since": info["dead_since"],
+                }
+                for name, info in self.nodes.items()
+            },
         }
 
-    def save_status(self):
-        """Сохраняет статус"""
-        with open(PULSE_STATUS_FILE, 'w') as f:
-            json.dump(self.get_status(), f, indent=2)
+        with open(STATUS_FILE, "w") as f:
+            json.dump(status, f, indent=2)
 
-    async def run_pulse_loop(self):
-        """Главный loop: синхронизируемся и отправляем pulse"""
-        logger.info("🚀 Pulse Sync Manager started")
-
-        # Начальная синхронизация с NTP
-        self.local_ntp_offset = self.sync_ntp()
+    async def run(self):
+        self.log(f"STARTED — {len(self.nodes)} nodes")
+        # Первый замер сразу
+        await self.pulse_cycle()
+        self.log(f"INITIAL: {sum(1 for n in self.nodes.values() if n['alive'])}/{len(self.nodes)} alive")
 
         while True:
             try:
-                # Отправляем heartbeat
-                await self.broadcast_heartbeat()
-
-                # Сохраняем статус
-                self.save_status()
-
-                # Re-sync с NTP каждые 5 минут
-                if self.pulse_sequence % 60 == 0:
-                    self.local_ntp_offset = self.sync_ntp()
-
-                # Ждём 5 секунд перед следующим pulse
                 await asyncio.sleep(5)
+                await self.pulse_cycle()
             except Exception as e:
-                logger.error(f"Pulse loop error: {e}")
+                self.log(f"ERROR: {e}")
                 await asyncio.sleep(5)
 
-async def start_pulse_http_server():
-    """Запускает HTTP сервер для /api/pulse/status"""
+
+async def main():
+    pulse = PulseSync()
+
+    # HTTP server на :9930 для /api/pulse/status
     from aiohttp import web
 
-    manager = PulseSyncManager()
+    async def status_handler(request):
+        if os.path.exists(STATUS_FILE):
+            with open(STATUS_FILE) as f:
+                return web.json_response(json.load(f))
+        return web.json_response({"error": "no data yet"}, status=503)
 
-    async def pulse_status(request):
-        return web.json_response(manager.get_status())
-
-    async def pulse_health(request):
-        """Endpoint для получения heartbeat от других сервисов"""
-        pulse_data = await request.json()
-        logger.info(f"Received pulse #{pulse_data['sequence']}")
+    async def health_handler(request):
         return web.json_response({"ok": True})
 
     app = web.Application()
-    app.router.add_get("/api/pulse/status", pulse_status)
-    app.router.add_post("/api/pulse", pulse_health)
+    app.router.add_get("/api/pulse/status", status_handler)
+    app.router.add_get("/health", health_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 9930)
     await site.start()
+    pulse.log("HTTP server on :9930")
 
-    logger.info("Pulse HTTP server listening on :9930")
+    # Запуск pulse loop
+    asyncio.create_task(pulse.run())
 
-    # Запускаем pulse loop в фоне
-    asyncio.create_task(manager.run_pulse_loop())
-
-    # Держим сервер живым
+    # Keep alive
     while True:
-        await asyncio.sleep(3600)
+        await asyncio.sleep(600)
 
 if __name__ == "__main__":
-    asyncio.run(start_pulse_http_server())
+    asyncio.run(main())
