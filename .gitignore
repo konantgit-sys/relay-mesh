@@ -21,3 +21,9 @@ workflow/
 agents/
 *.bak.*
 snapshots/
+
+# V2026-09-11: рантайм-мусор, который иначе висит в git status
+*.gz
+*.db-wal
+*.db-shm
+*.log-*.*

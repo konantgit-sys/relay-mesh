@@ -42,30 +42,15 @@ GATEWAY_ID = os.path.basename(__file__).replace(".py", "")
 # Критерии: живые NIP-11, разные домены, разный софт, гео-баланс
 NOSTR_RELAYS = [
     "wss://relay.damus.io",
-    "wss://relay.primal.net",
-    "wss://relay.nostr.info",
-    "wss://nostr.wine",
+    "wss://nos.lol",
+    "wss://purplepag.es",
     "wss://nostr.oxtr.dev",
-    "wss://nostr-pub.wellorder.net",
-    "wss://relay.f7z.io",
-    "wss://relay.nostrati.com",
-    "wss://relay.azzamo.net",              # 67 NIP — лучший в мире
-    "wss://relay.nostrcheck.me",           # 28 NIP — khatru
-    "wss://relay.nostriches.club",         # 28 NIP
-    "wss://relay.npubhaus.com",            # 28 NIP
-    "wss://relay.nosflare.com",            # 19 NIP
-    "wss://relay.mostro.network",          # 16 NIP — mostro
-    "wss://relay.nostr.moe",              # 19 NIP
-    "wss://nostr.bond",                    # 33 NIP — shugur
-    "wss://relay.aidatanorge.no",          # 20 NIP — Норвегия
-    "wss://nostr.einundzwanzig.space",     # Германия
-    "wss://soloco.nl",                     # Нидерланды
-    "wss://relay.degmods.com",             # EU
-    "wss://relay.nostrplebs.com",          # US
-    "wss://purplepag.es",                  # US
-    "wss://relay.minibits.cash",           # US
-    "wss://nostr.mom",                     # Япония/Азия
-    "wss://airchat.nostr1.com",            # nostr1.com (1 из 759)
+    "wss://nostr.mom",
+    "wss://nostr.data.haus",
+    "wss://relay.snort.social",
+    "wss://relay.nostr.net",
+    "wss://relay.0xchat.com",
+    "wss://relay.contextvm.org",
 ]
 
 # ─── Счётчики ──────────────────────────────────────────────────────────
@@ -161,7 +146,7 @@ class TCPGateway:
             return False
         try:
             line = ser.pack(event) + b"\n"
-            self.sr_writer.write(line.encode())
+            self.sr_writer.write(line)  # line уже bytes (ser.pack)
             await self.sr_writer.drain()
             self.stats["sent_to_sr"] += 1
             return True
@@ -338,7 +323,7 @@ class NostrGateway:
 
                 while True:
                     try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                        msg = await asyncio.wait_for(ws.recv(), timeout=60)
                     except asyncio.TimeoutError:
                         try:
                             pong = await ws.ping()
@@ -369,7 +354,7 @@ class NostrGateway:
 
                         if kind == 1:
                             short = content[:500]
-                            mesh_content = ser.pack({
+                            mesh_content = json.dumps({
                                 "from": f"nostr_{pubkey[:8]}",
                                 "seq": self.stats["nostr_events"],
                                 "payload": {
@@ -378,7 +363,7 @@ class NostrGateway:
                                     "original_kind": kind,
                                     "original_pubkey": pubkey,
                                 },
-                            })
+                            }, ensure_ascii=False)
                             event_mesh = await mesh_event_async(pubkey, mesh_content, 39002, created_at)
                             if self.tcp_gw:
                                 ok = await self.tcp_gw.send_to_sr(event_mesh)
@@ -388,7 +373,7 @@ class NostrGateway:
 
                         elif kind == 7:
                             short = content[:200]
-                            mesh_content = ser.pack({
+                            mesh_content = json.dumps({
                                 "from": f"nostr_{pubkey[:8]}",
                                 "seq": self.stats["nostr_events"],
                                 "payload": {
@@ -396,7 +381,7 @@ class NostrGateway:
                                     "reaction": short,
                                     "original_kind": kind,
                                 },
-                            })
+                            }, ensure_ascii=False)
                             event_mesh = await mesh_event_async(pubkey, mesh_content, 39003, created_at)
                             if self.tcp_gw:
                                 ok = await self.tcp_gw.send_to_sr(event_mesh)

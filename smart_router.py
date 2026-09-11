@@ -779,17 +779,20 @@ class SmartRouter:
                             self._cb_recovery_count["mesh"] = 0
                     except (ConnectionResetError, BrokenPipeError, OSError, asyncio.TimeoutError) as _eb:
                         # Не чистим буфер — сохраняем сообщение в pending queue
-                        pending_msg = ser.unpack(self._mesh_buf)
-                        self._mesh_buf.clear()
+                        # (буфер мог быть уже очищен → unpack пустоты даёт ValueError)
+                        if self._mesh_buf:
+                            pending_msg = ser.unpack(self._mesh_buf)
+                            self._mesh_buf.clear()
+                            if len(self._pending_mesh_queue) < self._pending_mesh_max:
+                                self._pending_mesh_queue.append(pending_msg)
+                                print(f"[Router] 📥 Saved to pending queue ({len(self._pending_mesh_queue)})")
+                            else:
+                                print(f"[Router] ⚠️ Pending queue full, dropping message")
+                        else:
+                            print(f"[Router] ⚠️ mesh drain failed, буфер пуст — пропуск")
                         self._cr_writer = None
                         self.stats["mesh_error"] += 1
                         result["error"] = f"mesh writer dead: {_eb}"
-                        # ═══ Сохраняем в очередь неотправленных ═══
-                        if len(self._pending_mesh_queue) < self._pending_mesh_max:
-                            self._pending_mesh_queue.append(pending_msg)
-                            print(f"[Router] 📥 Saved to pending queue ({len(self._pending_mesh_queue)})")
-                        else:
-                            print(f"[Router] ⚠️ Pending queue full, dropping message")
                         asyncio.ensure_future(self._reconnect_mesh())
                 
                 # ═══ Форвард подписчикам (агентам) — ВСЕГДА, не только при успешном drain ═══
