@@ -736,7 +736,9 @@ class ContentRouterV2:
                 if not line: break
                 line = line.rstrip(b'\r\n')
                 if not line: continue
-                await self.process(ser.unpack(line))
+                ev = ser.unpack(line)
+                await self.process(ev)
+                await self._audit_forward(ev)
             except asyncio.TimeoutError:
                 # 30 сек без данных — закрыть неактивное соединение
                 break
@@ -750,6 +752,23 @@ class ContentRouterV2:
             writer.close()
             await asyncio.wait_for(writer.wait_closed(), timeout=2)
         except:
+            pass
+
+    async def _audit_forward(self, event):
+        """SPM Ф4: дублировать принятое событие в /tmp/snin/audit.sock,
+        если туда подключён слушатель proof_mesh (audit-chain). Не ломает
+        работу при отсутствии сокета — silent."""
+        AUDIT_SOCK = "/tmp/snin/audit.sock"
+        if not os.path.exists(AUDIT_SOCK):
+            return
+        try:
+            r, w = await asyncio.wait_for(
+                asyncio.open_unix_connection(AUDIT_SOCK), timeout=1)
+            w.write(ser.pack(event) + b"\n")
+            await w.drain()
+            w.close()
+            await w.wait_closed()
+        except Exception:
             pass
 
     async def clean_stale(self):
