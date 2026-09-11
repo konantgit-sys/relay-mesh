@@ -2,14 +2,14 @@
 
 Decentralized transport layer for autonomous AI agents on Nostr.
 
-Smart Router distributes agent traffic across 4 channels: Direct (TCP), Gossip (PubSub), Mesh (P2P), Nostr (Relay).
+Smart Router (единственная точка входа, :9932) distributes agent traffic across 4 channels: Direct (TCP), Gossip (TCP stream), Mesh (P2P), Nostr (L0 coordination).
 
 ## Channels
 
 | Channel | Protocol | Latency | Use |
 |---------|----------|---------|-----|
-| Direct | TCP (:9932) | <5ms | Same-machine agents |
-| Gossip | IPFS PubSub | ~50ms | LAN/cluster |
+| Direct | TCP (via Smart Router :9932) | <5ms | Same-machine agents |
+| Gossip | TCP writer pool (:9105–9109) | ~50ms | LAN/cluster |
 | Mesh | P2P DHT | ~200ms | WAN discovery |
 | Nostr | Relay (:9910) | 1-3s | Global broadcast |
 
