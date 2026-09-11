@@ -92,7 +92,7 @@
 - ✅ Фаза 1 — Knowledge Graph (384-d embeddings, 3 таблицы)
 - ✅ Фаза 2 — Feedback Analytics (engagement meter, sentiment tracker)
 - ✅ Фаза 3–5 — Full Autonomy Cycle (cryter_v10_daemon.py, Adaptive Scheduler, Vector Memory, Diversity Guard)
-- ✅ 101 Nostr relay (Tier 1–4 распределённая сеть)
+- ✅ 25 Nostr relay (Tier 1–4 распределённая сеть)
 - ✅ Цикл #292 успешно завершён (15 сек EN + 18 сек RU)
 - **Следующий шаг:** Ждёт твоего решения — запускать V10 как основную или оставить V8.
 

@@ -1,0 +1,5 @@
+#!/bin/bash
+cd /home/agent/data/sites/relay-mesh
+pip3 install --break-system-packages -q orjson 2>/dev/null
+nohup python3 snin_adapter.py run >> data/snin_adapter_run.log 2>&1 &
+echo "SNIN Adapter started PID=$!"
